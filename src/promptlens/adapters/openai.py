@@ -10,19 +10,30 @@ from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
 class OpenAIAdapter(Adapter):
     """Thin wrapper around OpenAI chat completions."""
 
-    def __init__(self, model: str, temperature: float = 0.0, client: Any | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        temperature: float = 0.0,
+        logprobs: bool = False,
+        client: Any | None = None,
+    ) -> None:
         self.model = model
         self.temperature = temperature
+        self.logprobs = logprobs
         self._client = client
 
     def complete(self, prompt: str, tools: ToolDefinitions | None = None) -> CompletionOutput:
         client = self._client or _default_client()
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            tools=tools,
-            temperature=self.temperature,
-        )
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+        }
+        if tools:
+            kwargs["tools"] = tools
+        if self.logprobs:
+            kwargs["logprobs"] = True
+        response = client.chat.completions.create(**kwargs)
         choice = response.choices[0]
         message = choice.message
         text = message.content or ""

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+import statistics
+
 from promptlens.core.base import Adapter, Masker, Sampler, Scorer, Segmenter, ToolDefinitions
 from promptlens.core.pricing import estimate_cost
 from promptlens.core.result import (
@@ -56,12 +59,15 @@ class AttributionHarness:
     def explain(self, prompt: str, tools: ToolDefinitions | None = None) -> AttributionResult:
         features = self.segmenter.segment(prompt, tools=tools)
         baseline = self.adapter.complete(prompt, tools=tools)
+        coalitions = list(self.sampler.sample(len(features)))
+        masked_prompts = [self.masker.mask(features, coalition) for coalition in coalitions]
+        candidates = self.adapter.complete_batch(masked_prompts, tools=tools)
         evaluations: list[CoalitionEvaluation] = []
         attributions: list[FeatureAttribution] = []
         feature_scores: dict[int, list[float]] = {index: [] for index in range(len(features))}
-        for coalition in self.sampler.sample(len(features)):
-            masked_prompt = self.masker.mask(features, coalition)
-            candidate = self.adapter.complete(masked_prompt, tools=tools)
+        for coalition, masked_prompt, candidate in zip(
+            coalitions, masked_prompts, candidates, strict=True
+        ):
             score = self.scorer.score(baseline, candidate)
             evaluations.append(
                 CoalitionEvaluation(
@@ -77,7 +83,10 @@ class AttributionHarness:
         for index, feature in enumerate(features):
             scores = feature_scores[index]
             value = sum(scores) / len(scores) if scores else 0.0
-            attributions.append(FeatureAttribution(feature=feature, value=value))
+            stderr = None
+            if len(scores) > 1:
+                stderr = statistics.stdev(scores) / math.sqrt(len(scores))
+            attributions.append(FeatureAttribution(feature=feature, value=value, stderr=stderr))
         return AttributionResult(
             baseline_output=baseline,
             attributions=attributions,
@@ -87,11 +96,13 @@ class AttributionHarness:
 
 
 def _sampler_from_scale(scale: str | int) -> Sampler:
+    if isinstance(scale, bool):
+        msg = f"Unsupported perturbation scale: {scale}"
+        raise ValueError(msg)
     if isinstance(scale, int):
-        return LeaveOneOutSampler()
-    if scale == "quick":
-        return LeaveOneOutSampler()
-    if scale in {"standard", "full"}:
-        return LeaveOneOutSampler()
-    msg = f"Unsupported perturbation scale: {scale}"
-    raise ValueError(msg)
+        return LeaveOneOutSampler(repeats=scale)
+    repeats = {"quick": 1, "standard": 3, "full": 5}.get(scale)
+    if repeats is None:
+        msg = f"Unsupported perturbation scale: {scale}"
+        raise ValueError(msg)
+    return LeaveOneOutSampler(repeats=repeats)

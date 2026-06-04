@@ -52,11 +52,14 @@ def _segmenter(name: str) -> Segmenter:
     raise typer.BadParameter(msg)
 
 
-def _offline_harness(model: str, segmenter_name: str) -> AttributionHarness:
+def _offline_harness(
+    model: str, segmenter_name: str, scale: str | int = "quick"
+) -> AttributionHarness:
     return AttributionHarness(
         adapter=EchoAdapter(model=model),
         segmenter=_segmenter(segmenter_name),
         scorer=LengthDriftScorer(),
+        perturbation_scale=scale,
     )
 
 
@@ -71,10 +74,13 @@ def estimate(
     compare: Annotated[
         str | None, typer.Option(help="Comma-separated model names to compare.")
     ] = None,
+    scale: Annotated[
+        str, typer.Option(help="Perturbation scale: quick, standard, or full.")
+    ] = "quick",
 ) -> None:
     """Preview attribution cost without provider calls."""
     prompt_text = _read_prompt(prompt)
-    harness = _offline_harness(model=model, segmenter_name=segmenter)
+    harness = _offline_harness(model=model, segmenter_name=segmenter, scale=scale)
     compare_models = [item.strip() for item in compare.split(",")] if compare else None
     harness.estimate(prompt_text, tools=_read_tools(tools), compare_models=compare_models).print()
 
@@ -88,10 +94,13 @@ def explain(
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
     ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
+    scale: Annotated[
+        str, typer.Option(help="Perturbation scale: quick, standard, or full.")
+    ] = "quick",
 ) -> None:
     """Run offline attribution using the SDK pipeline."""
     prompt_text = _read_prompt(prompt)
-    result = _offline_harness(model=model, segmenter_name=segmenter).explain(
+    result = _offline_harness(model=model, segmenter_name=segmenter, scale=scale).explain(
         prompt_text, tools=_read_tools(tools)
     )
     if output:

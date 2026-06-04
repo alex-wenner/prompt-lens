@@ -36,3 +36,9 @@ harness = AttributionHarness(
 result = harness.explain("One sentence. Another sentence.")
 result.print()
 ```
+
+`explain()` renders features ranked by importance, with each feature's normalized
+share of the total attribution and a weight bar, so the dominant prompt parts are
+immediately visible. Pass `perturbation_scale="standard"` (or `"full"`, or an integer
+number of repeats) to average several leave-one-out sweeps and populate per-feature
+standard errors for non-deterministic providers.

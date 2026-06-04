@@ -102,14 +102,32 @@ class AttributionResult:
     evaluations: list[CoalitionEvaluation]
     cost_estimate: CostEstimate | None = None
 
+    def ranked(self) -> list[tuple[FeatureAttribution, float]]:
+        """Return attributions sorted by importance with each one's normalized share.
+
+        Shares are computed over the positive attribution mass so the visible
+        weights sum to 1.0 (100%) and rank features by how much masking them
+        moved the output.
+        """
+        total = sum(max(0.0, attribution.value) for attribution in self.attributions)
+        ordered = sorted(self.attributions, key=lambda item: item.value, reverse=True)
+        return [
+            (attribution, (max(0.0, attribution.value) / total) if total > 0 else 0.0)
+            for attribution in ordered
+        ]
+
     def to_dict(self) -> dict[str, Any]:
+        shares = {id(attribution): share for attribution, share in self.ranked()}
         return {
             "baseline_output": {
                 "text": self.baseline_output.text,
                 "tool_calls": self.baseline_output.tool_calls,
                 "logprobs": self.baseline_output.logprobs,
             },
-            "attributions": [attribution.to_dict() for attribution in self.attributions],
+            "attributions": [
+                {**attribution.to_dict(), "share": shares[id(attribution)]}
+                for attribution in self.attributions
+            ],
             "evaluations": [evaluation.to_dict() for evaluation in self.evaluations],
             "cost_estimate": self.cost_estimate.to_dict() if self.cost_estimate else None,
         }
@@ -121,11 +139,16 @@ class AttributionResult:
         table = Table(title="promptlens Attribution")
         table.add_column("Feature")
         table.add_column("Value", justify="right")
+        table.add_column("Share", justify="right")
+        table.add_column("Weight")
         table.add_column("Text")
-        for attribution in self.attributions:
+        for attribution, share in self.ranked():
+            bar = "█" * round(share * 20)
             table.add_row(
                 attribution.feature.name,
                 f"{attribution.value:.4f}",
+                f"{share * 100:.1f}%",
+                bar,
                 attribution.feature.text.replace("\n", " ")[:80],
             )
         Console().print(table)
