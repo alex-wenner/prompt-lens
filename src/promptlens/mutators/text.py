@@ -40,7 +40,7 @@ class LLMRewriteMutator(PromptMutator):
         for feature in features:
             marked_prompt = _mark_feature(prompt, features, feature)
             rewrite_prompt = f"{self.instruction}\n\nPrompt:\n{marked_prompt}"
-            for repeat in range(self.rewrites_per_feature):
+            for rewrite_index in range(self.rewrites_per_feature):
                 output = self.adapter.complete(rewrite_prompt, tools=tools)
                 mutations.append(
                     PromptMutation(
@@ -49,7 +49,7 @@ class LLMRewriteMutator(PromptMutator):
                         metadata={
                             "mutator": self.__class__.__name__,
                             "rewrite_model": self.adapter.model,
-                            "repeat": repeat,
+                            "rewrite_index": rewrite_index,
                         },
                     )
                 )
