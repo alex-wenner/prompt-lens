@@ -21,7 +21,9 @@ class ToolAccuracyScorer(Scorer):
             arguments = tool_call.get("arguments") or tool_call.get("input") or {}
             if not isinstance(arguments, dict):
                 return 0.5
-            present = sum(1 for arg in self.required_args if arg in arguments and arguments[arg] is not None)
+            present = sum(
+                1 for arg in self.required_args if arg in arguments and arguments[arg] is not None
+            )
             if not self.required_args:
                 return 1.0
             return 0.5 + 0.5 * (present / len(self.required_args))

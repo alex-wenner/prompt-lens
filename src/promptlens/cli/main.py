@@ -8,11 +8,16 @@ from typing import Annotated
 
 import typer
 
+from promptlens import AttributionHarness, Segmenter
 from promptlens.adapters import EchoAdapter
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
-from promptlens import AttributionHarness
 from promptlens.scorers import LengthDriftScorer
-from promptlens.segmenters import MarkdownSectionSegmenter, ParagraphSegmenter, SentenceSegmenter, ToolSegmenter
+from promptlens.segmenters import (
+    MarkdownSectionSegmenter,
+    ParagraphSegmenter,
+    SentenceSegmenter,
+    ToolSegmenter,
+)
 
 app = typer.Typer(help="Black-box prompt attribution for LLM prompts.")
 
@@ -34,7 +39,7 @@ def _read_tools(path: str | None) -> list[dict[str, object]] | None:
     return [dict(item) for item in data]
 
 
-def _segmenter(name: str):
+def _segmenter(name: str) -> Segmenter:
     if name == "sentences":
         return SentenceSegmenter()
     if name == "paragraphs":
@@ -59,9 +64,13 @@ def _offline_harness(model: str, segmenter_name: str) -> AttributionHarness:
 def estimate(
     prompt: Annotated[str, typer.Option(help="Prompt text or path to a prompt file.")],
     model: Annotated[str, typer.Option(help="Provider/model name.")] = "openai/gpt-4o-mini",
-    segmenter: Annotated[str, typer.Option(help="sentences, paragraphs, sections, or tools.")] = "sentences",
+    segmenter: Annotated[
+        str, typer.Option(help="sentences, paragraphs, sections, or tools.")
+    ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
-    compare: Annotated[str | None, typer.Option(help="Comma-separated model names to compare.")] = None,
+    compare: Annotated[
+        str | None, typer.Option(help="Comma-separated model names to compare.")
+    ] = None,
 ) -> None:
     """Preview attribution cost without provider calls."""
     prompt_text = _read_prompt(prompt)
@@ -75,7 +84,9 @@ def explain(
     prompt: Annotated[str, typer.Option(help="Prompt text or path to a prompt file.")],
     output: Annotated[str | None, typer.Option(help="Optional JSON output path.")] = None,
     model: Annotated[str, typer.Option(help="Offline model id for MVP smoke runs.")] = "echo",
-    segmenter: Annotated[str, typer.Option(help="sentences, paragraphs, sections, or tools.")] = "sentences",
+    segmenter: Annotated[
+        str, typer.Option(help="sentences, paragraphs, sections, or tools.")
+    ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
 ) -> None:
     """Run offline attribution using the SDK pipeline."""

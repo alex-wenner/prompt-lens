@@ -16,7 +16,12 @@ class SentenceSegmenter(Segmenter):
 
     def segment(self, prompt: str, tools: ToolDefinitions | None = None) -> list[Feature]:
         features = [
-            Feature(name=f"sentence_{index + 1}", text=match.group().strip(), start=match.start(), end=match.end())
+            Feature(
+                name=f"sentence_{index + 1}",
+                text=match.group().strip(),
+                start=match.start(),
+                end=match.end(),
+            )
             for index, match in enumerate(_SENTENCE_RE.finditer(prompt))
             if match.group().strip()
         ]
@@ -56,7 +61,9 @@ class MarkdownSectionSegmenter(Segmenter):
         for index, match in enumerate(matches):
             end = matches[index + 1].start() if index + 1 < len(matches) else len(prompt)
             text = prompt[match.start() : end].strip()
-            features.append(Feature(name=f"section_{index + 1}", text=text, start=match.start(), end=end))
+            features.append(
+                Feature(name=f"section_{index + 1}", text=text, start=match.start(), end=end)
+            )
         if tools:
             features.append(_tools_feature(tools))
         return features

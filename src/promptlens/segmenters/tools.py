@@ -25,7 +25,13 @@ class ToolSegmenter(Segmenter):
         normalized = _normalize_tool(tool)
         tool_name = str(normalized.get("name", f"tool_{tool_index + 1}"))
         if self.granularity == "tool":
-            return [Feature(name=f"tool:{tool_name}", text=str(tool), metadata={"kind": "tool", "tool": tool})]
+            return [
+                Feature(
+                    name=f"tool:{tool_name}",
+                    text=str(tool),
+                    metadata={"kind": "tool", "tool": tool},
+                )
+            ]
         features = [
             Feature(
                 name=f"tool:{tool_name}:description",
@@ -49,7 +55,11 @@ class ToolSegmenter(Segmenter):
                 Feature(
                     name=f"tool:{tool_name}:parameter:{parameter_name}",
                     text=str(schema),
-                    metadata={"kind": "tool_parameter", "tool": tool_name, "parameter": parameter_name},
+                    metadata={
+                        "kind": "tool_parameter",
+                        "tool": tool_name,
+                        "parameter": parameter_name,
+                    },
                 )
             )
         return features

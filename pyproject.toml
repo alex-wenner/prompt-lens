@@ -46,3 +46,7 @@ packages = ["promptlens"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: requires live provider credentials"]
+
+[[tool.mypy.overrides]]
+module = ["anthropic", "boto3", "openai"]
+ignore_missing_imports = true

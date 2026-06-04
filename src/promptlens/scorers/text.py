@@ -38,7 +38,7 @@ def cosine_distance(left: Sequence[float], right: Sequence[float]) -> float:
     if len(left) != len(right):
         msg = "Embedding vectors must have the same length"
         raise ValueError(msg)
-    dot = sum(a * b for a, b in zip(left, right))
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
     left_norm = math.sqrt(sum(a * a for a in left))
     right_norm = math.sqrt(sum(b * b for b in right))
     if left_norm == 0 or right_norm == 0:

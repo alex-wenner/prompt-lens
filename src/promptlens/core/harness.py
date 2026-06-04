@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from promptlens.core.base import Adapter, Masker, Scorer, Segmenter, ToolDefinitions
+from promptlens.core.base import Adapter, Masker, Sampler, Scorer, Segmenter, ToolDefinitions
 from promptlens.core.pricing import estimate_cost
-from promptlens.core.result import AttributionResult, CoalitionEvaluation, CostEstimate, FeatureAttribution
+from promptlens.core.result import (
+    AttributionResult,
+    CoalitionEvaluation,
+    CostEstimate,
+    FeatureAttribution,
+)
 from promptlens.maskers import PlaceholderMasker
 from promptlens.samplers import LeaveOneOutSampler
-from promptlens.core.base import Sampler
 
 
 class AttributionHarness:

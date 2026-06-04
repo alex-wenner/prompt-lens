@@ -16,5 +16,8 @@ class PlaceholderMasker(Masker):
 
     def mask(self, features: Sequence[Feature], coalition: Coalition) -> str:
         normalized = normalize_coalition(coalition, len(features))
-        parts = [feature.text if keep else self.placeholder for feature, keep in zip(features, normalized)]
+        parts = [
+            feature.text if keep else self.placeholder
+            for feature, keep in zip(features, normalized, strict=True)
+        ]
         return self.separator.join(parts)
