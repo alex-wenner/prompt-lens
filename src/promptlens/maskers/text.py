@@ -71,5 +71,8 @@ class FillerMasker(Masker):
         return self.separator.join(parts)
 
     def _filler_for(self, text: str) -> str:
-        repeats = max(1, len(text) // len(self.filler_token))
-        return (self.filler_token * repeats)[: len(text)] or self.filler_token
+        if not text:
+            return ""
+        token = self.filler_token
+        repeats = (len(text) + len(token) - 1) // len(token)
+        return (token * repeats)[: len(text)]

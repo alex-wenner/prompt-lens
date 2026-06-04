@@ -41,6 +41,8 @@ Available adapters include:
 
 Provider adapters are intentionally thin. They should make it easy to swap providers while keeping the attribution logic stable.
 
+Coalition evaluations are independent, so `Adapter.complete_batch()` defines a batch path the harness always uses. The default implementation calls `complete()` per prompt, but `OpenAIAdapter` and `AnthropicAdapter` accept `use_batch_api=True` to route batches through the provider's native Batch / Message Batches API (roughly 50% cheaper, asynchronous with polling via `poll_interval_seconds`). It is opt-in because batch jobs trade latency for cost; the default behavior is unchanged.
+
 ### Segmenters
 
 Segmenters define what can receive attribution.
@@ -54,9 +56,13 @@ Choose the segmenter based on the question you are asking. Sentence-level attrib
 
 ### Maskers
 
-The default `PlaceholderMasker` rebuilds a prompt from the selected coalition of features and replaces masked features with a placeholder. This keeps prompt structure mostly intact while hiding the content under test.
+Maskers rebuild a prompt from the selected coalition of features. The strategy you choose changes what an attribution value *means*, so it is exposed as a first-class option (`--masker` on the CLI, `masker=` on `AttributionHarness`).
 
-Custom maskers can be useful when whitespace, formatting, or domain-specific placeholders matter.
+- `PlaceholderMasker` (default) replaces masked features with a placeholder such as `[...]`. Prompt structure stays mostly intact, so attribution measures the effect of hiding a feature's content while signalling that something was there.
+- `DropMasker` omits masked features entirely and collapses their separators. Attribution measures the effect of removing a feature outright, with no placeholder hint left behind — useful when the placeholder itself would perturb the model.
+- `FillerMasker` replaces masked features with neutral filler of comparable length. Prompt length and shape stay roughly constant, so attribution isolates a feature's semantic content from length confounds.
+
+There is no universally correct masker: dropping a sentence, replacing it with `[...]`, and replacing it with neutral filler all produce different coalitions and therefore different attribution values. Pick the one whose counterfactual matches the question you are asking.
 
 ### Supplementary prompt mutations
 
@@ -72,6 +78,7 @@ Scorers convert output differences into numeric signals.
 - `EmbeddingScorer` measures semantic drift with an embedding client.
 - `LogprobScorer` compares average token log probabilities when the adapter provides them.
 - `ToolAccuracyScorer` checks whether a completion selected an expected tool and required arguments.
+- `CompositeScorer` combines several scorers as a weighted sum, e.g. `0.7` embedding drift plus `0.3` tool accuracy, when "what changed" is best captured by more than one signal.
 
 The right scorer depends on what "changed" means for your task. For factual answer quality, semantic distance may be useful. For tool routing, tool accuracy is usually more direct.
 
@@ -85,6 +92,8 @@ The built-in leave-one-out sampler evaluates each feature by masking it independ
 - integer: custom repeat count.
 
 Repeats are helpful when using non-deterministic providers. More repeats can produce standard errors, but they also increase cost. Math remains undefeated.
+
+For distributional attribution you can also keep a single leave-one-out sweep but evaluate each coalition multiple times with `samples_per_coalition` (`--samples-per-coalition` on the CLI). At temperature > 0 this turns each coalition into a small distribution: per-coalition scores are averaged, every sample feeds the feature's standard error, and the cost estimator multiplies its evaluation count so the spend preview stays honest.
 
 ## CLI workflow
 
@@ -196,7 +205,7 @@ The library does not collect telemetry, prompts, outputs, PII, API keys, or secr
 ## Current limitations
 
 - Leave-one-out attribution can miss interactions where two features only matter together.
-- Cost grows with feature count and repeat count.
+- Cost grows with feature count, repeat count, and samples per coalition.
 - Scores are only as meaningful as the selected scorer.
 - Provider adapters are intentionally minimal and may not expose every provider option.
 

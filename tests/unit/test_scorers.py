@@ -31,6 +31,20 @@ def test_composite_scorer_weights_components() -> None:
     assert composite.score(baseline, candidate) == drift
 
 
+def test_composite_scorer_sums_distinct_scorers() -> None:
+    class ConstantScorer(LengthDriftScorer):
+        def __init__(self, value: float) -> None:
+            self.value = value
+
+        def score(self, baseline: CompletionOutput, candidate: CompletionOutput) -> float:
+            return self.value
+
+    composite = CompositeScorer([(ConstantScorer(2.0), 0.5), (ConstantScorer(10.0), 0.1)])
+
+    # 0.5 * 2.0 + 0.1 * 10.0 == 2.0
+    assert composite.score(CompletionOutput(text=""), CompletionOutput(text="")) == 2.0
+
+
 def test_composite_scorer_requires_components() -> None:
     import pytest
 

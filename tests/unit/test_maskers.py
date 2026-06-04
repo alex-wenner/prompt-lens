@@ -32,3 +32,18 @@ def test_filler_masker_rejects_empty_token() -> None:
 
     with pytest.raises(ValueError, match="non-empty"):
         FillerMasker(filler_token="")
+
+
+def test_filler_masker_multichar_token_preserves_length() -> None:
+    features = [Feature(name="a", text="abcde"), Feature(name="b", text="keep")]
+    masker = FillerMasker(filler_token="xy")
+    masked = masker.mask(features, (False, True))
+    filler, kept = masked.split(" ", 1)
+    assert kept == "keep"
+    assert len(filler) == len("abcde")
+
+
+def test_filler_masker_handles_empty_feature_text() -> None:
+    features = [Feature(name="a", text=""), Feature(name="b", text="keep")]
+    masker = FillerMasker(filler_token="xy")
+    assert masker.mask(features, (False, True)) == " keep"
