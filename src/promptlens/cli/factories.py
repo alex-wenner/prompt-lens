@@ -140,9 +140,6 @@ def _resolve_model(provider: str, model: str | None) -> str:
 
 
 def _repeats_from_scale(scale: str | int) -> int:
-    if isinstance(scale, bool):
-        msg = f"Unsupported perturbation scale: {scale}"
-        raise ValueError(msg)
     if isinstance(scale, int):
         if scale < 1:
             msg = f"repeats must be >= 1, got {scale}"

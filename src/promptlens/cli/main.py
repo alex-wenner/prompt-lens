@@ -162,7 +162,7 @@ def explain(
         provider=provider,
         model=model,
         segmenter_name=segmenter,
-        scale=_parse_scale(scale),
+        scale=scale,
         temperature=temperature,
         base_url=base_url,
         sampler_name=sampler,
