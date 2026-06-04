@@ -26,7 +26,7 @@ def test_build_adapter_uses_injected_openai_client() -> None:
     assert adapter._client is client
 
 
-def test_build_adapter_uses_env_model(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_adapter_openai_uses_env_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_MODEL", "env-model")
 
     adapter = build_adapter("openai", None, temperature=0.0, base_url=None, client=object())

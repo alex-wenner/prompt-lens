@@ -145,7 +145,7 @@ def _resolve_model(provider: str, model: str | None) -> str:
 def _repeats_from_scale(scale: str | int) -> int:
     if isinstance(scale, int):
         if scale < 1:
-            msg = f"repeats must be >= 1, got {scale}"
+            msg = f"scale must be a positive integer, got {scale}"
             raise ValueError(msg)
         return scale
     repeats = {"quick": 1, "standard": 3, "full": 5}.get(scale)
