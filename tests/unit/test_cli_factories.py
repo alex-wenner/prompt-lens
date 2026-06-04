@@ -3,8 +3,9 @@ import json
 import pytest
 
 from promptlens.adapters import EchoAdapter, OpenAIAdapter, OpenAICompatibleAdapter
-from promptlens.cli.factories import build_adapter, build_sampler, build_scorer
+from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
 from promptlens.core import CompletionOutput
+from promptlens.maskers import DropMasker, FillerMasker, PlaceholderMasker
 from promptlens.samplers import LeaveOneOutSampler
 from promptlens.scorers import EmbeddingScorer, LengthDriftScorer, ToolAccuracyScorer
 
@@ -55,6 +56,17 @@ def test_openai_compatible_accepts_injected_client() -> None:
     assert isinstance(adapter, OpenAICompatibleAdapter)
     assert adapter.base_url == "http://localhost:8000/v1"
     assert adapter._client is client
+
+
+def test_build_masker_returns_strategy() -> None:
+    assert isinstance(build_masker("placeholder"), PlaceholderMasker)
+    assert isinstance(build_masker("drop"), DropMasker)
+    assert isinstance(build_masker("filler"), FillerMasker)
+
+
+def test_build_masker_rejects_unknown() -> None:
+    with pytest.raises(ValueError, match="Unsupported masker"):
+        build_masker("nope")
 
 
 def test_build_sampler_converts_scale_to_repeats() -> None:

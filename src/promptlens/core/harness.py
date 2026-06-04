@@ -44,8 +44,12 @@ class AttributionHarness:
         supplementary_mutator: PromptMutator | None = None,
         optimizer: PromptOptimizer | None = None,
         perturbation_scale: str | int = "quick",
+        samples_per_coalition: int = 1,
         expected_output_tokens: int = 300,
     ) -> None:
+        if samples_per_coalition < 1:
+            msg = f"samples_per_coalition must be >= 1, got {samples_per_coalition}"
+            raise ValueError(msg)
         self.adapter = adapter
         self.segmenter = segmenter
         self.scorer = scorer
@@ -54,6 +58,7 @@ class AttributionHarness:
         self.supplementary_mutator = supplementary_mutator
         self.optimizer = optimizer
         self.perturbation_scale = perturbation_scale
+        self.samples_per_coalition = samples_per_coalition
         self.expected_output_tokens = expected_output_tokens
 
     def estimate(
@@ -64,6 +69,7 @@ class AttributionHarness:
     ) -> CostEstimate:
         features = self.segmenter.segment(prompt, tools=tools)
         evaluations = self.sampler.estimate_evaluations(len(features))
+        evaluations *= self.samples_per_coalition
         return estimate_cost(
             model=self.adapter.model,
             prompt=prompt,
@@ -77,32 +83,42 @@ class AttributionHarness:
         features = self.segmenter.segment(prompt, tools=tools)
         baseline = self.adapter.complete(prompt, tools=tools)
         coalitions = list(self.sampler.sample(len(features)))
+        samples = self.samples_per_coalition
         masked_prompts = [self.masker.mask(features, coalition) for coalition in coalitions]
-        candidates = self.adapter.complete_batch(masked_prompts, tools=tools)
-        if len(candidates) != len(coalitions):
+        # Evaluate every coalition ``samples`` times so non-deterministic providers
+        # yield a distribution per coalition rather than a single draw. Prompts are
+        # expanded contiguously (coalition-major) so each group maps back cleanly.
+        batch_prompts = [
+            masked for masked in masked_prompts for _ in range(samples)
+        ]
+        candidates = self.adapter.complete_batch(batch_prompts, tools=tools)
+        expected = len(coalitions) * samples
+        if len(candidates) != expected:
             msg = (
                 f"Adapter.complete_batch returned {len(candidates)} outputs for "
-                f"{len(coalitions)} prompts"
+                f"{expected} prompts"
             )
             raise ValueError(msg)
         evaluations: list[CoalitionEvaluation] = []
         attributions: list[FeatureAttribution] = []
         feature_scores: dict[int, list[float]] = {index: [] for index in range(len(features))}
-        for coalition, masked_prompt, candidate in zip(
-            coalitions, masked_prompts, candidates, strict=True
+        for c_index, (coalition, masked_prompt) in enumerate(
+            zip(coalitions, masked_prompts, strict=True)
         ):
-            score = self.scorer.score(baseline, candidate)
+            group = candidates[c_index * samples : (c_index + 1) * samples]
+            sample_scores = [self.scorer.score(baseline, candidate) for candidate in group]
+            mean_score = sum(sample_scores) / len(sample_scores)
             evaluations.append(
                 CoalitionEvaluation(
                     coalition=coalition,
                     prompt=masked_prompt,
-                    output=candidate,
-                    score=score,
+                    output=group[0],
+                    score=mean_score,
                 )
             )
             for index, included in enumerate(coalition):
                 if not included:
-                    feature_scores[index].append(score)
+                    feature_scores[index].extend(sample_scores)
         for index, feature in enumerate(features):
             scores = feature_scores[index]
             value = sum(scores) / len(scores) if scores else 0.0

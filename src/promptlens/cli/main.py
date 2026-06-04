@@ -10,7 +10,7 @@ import typer
 
 from promptlens import AttributionHarness, Segmenter
 from promptlens.adapters import EchoAdapter
-from promptlens.cli.factories import build_adapter, build_sampler, build_scorer
+from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
 from promptlens.mutators import LLMRewriteMutator
 from promptlens.optimizers import LLMPromptOptimizer
@@ -80,6 +80,8 @@ def _harness(
     scorer_name: str,
     scorer_config: str | None,
     supplementary_rewrites: int,
+    masker_name: str = "placeholder",
+    samples_per_coalition: int = 1,
     with_optimizer: bool = False,
 ) -> AttributionHarness:
     try:
@@ -91,8 +93,12 @@ def _harness(
         )
         sampler = build_sampler(sampler_name, scale=scale)
         scorer = build_scorer(scorer_name, config_path=scorer_config)
+        masker = build_masker(masker_name)
         if supplementary_rewrites < 0:
             msg = "The --supplementary-rewrites value must be non-negative"
+            raise ValueError(msg)
+        if samples_per_coalition < 1:
+            msg = "The --samples-per-coalition value must be a positive integer"
             raise ValueError(msg)
         supplementary_mutator = (
             LLMRewriteMutator(adapter, rewrites_per_feature=supplementary_rewrites)
@@ -107,9 +113,11 @@ def _harness(
         segmenter=_segmenter(segmenter_name),
         scorer=scorer,
         sampler=sampler,
+        masker=masker,
         supplementary_mutator=supplementary_mutator,
         optimizer=optimizer,
         perturbation_scale=_parse_scale(scale),
+        samples_per_coalition=samples_per_coalition,
     )
 
 
@@ -161,6 +169,10 @@ def explain(
     ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
     sampler: Annotated[str, typer.Option(help="leave-one-out.")] = "leave-one-out",
+    masker: Annotated[
+        str,
+        typer.Option(help="Masking strategy: placeholder, drop, or filler."),
+    ] = "placeholder",
     scorer: Annotated[
         str,
         typer.Option(help="length, embedding, logprob, or tool-call."),
@@ -170,6 +182,12 @@ def explain(
         typer.Option(help="Optional JSON scorer config path."),
     ] = None,
     scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
+    samples_per_coalition: Annotated[
+        int,
+        typer.Option(
+            help="Evaluations per coalition for distributional attribution at temperature > 0."
+        ),
+    ] = 1,
     supplementary_rewrites: Annotated[
         int,
         typer.Option(
@@ -190,6 +208,8 @@ def explain(
         scorer_name=scorer,
         scorer_config=scorer_config,
         supplementary_rewrites=supplementary_rewrites,
+        masker_name=masker,
+        samples_per_coalition=samples_per_coalition,
     ).explain(prompt_text, tools=_read_tools(tools))
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")

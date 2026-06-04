@@ -15,7 +15,8 @@ from promptlens.adapters import (
     OpenAIAdapter,
     OpenAICompatibleAdapter,
 )
-from promptlens.core import Adapter, Sampler, Scorer
+from promptlens.core import Adapter, Masker, Sampler, Scorer
+from promptlens.maskers import DropMasker, FillerMasker, PlaceholderMasker
 from promptlens.samplers import LeaveOneOutSampler
 from promptlens.scorers import (
     EmbeddingScorer,
@@ -93,6 +94,19 @@ def build_adapter(
             client=client,
         )
     msg = f"Unsupported provider: {provider}"
+    raise ValueError(msg)
+
+
+def build_masker(name: str) -> Masker:
+    """Build a masking strategy for CLI attribution runs."""
+    masker_key = name.strip().lower()
+    if masker_key == "placeholder":
+        return PlaceholderMasker()
+    if masker_key == "drop":
+        return DropMasker()
+    if masker_key == "filler":
+        return FillerMasker()
+    msg = f"Unsupported masker: {name}"
     raise ValueError(msg)
 
 
