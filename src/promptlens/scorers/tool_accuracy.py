@@ -1,0 +1,30 @@
+"""Tool-call accuracy scorer."""
+
+from __future__ import annotations
+
+from promptlens.core.base import CompletionOutput, Scorer
+
+
+class ToolAccuracyScorer(Scorer):
+    """Score whether a completion selected the expected tool and required arguments."""
+
+    def __init__(self, expected_tool: str, required_args: list[str] | None = None) -> None:
+        self.expected_tool = expected_tool
+        self.required_args = required_args or []
+
+    def score(self, baseline: CompletionOutput, candidate: CompletionOutput) -> float:
+        del baseline
+        for tool_call in candidate.tool_calls:
+            name = str(tool_call.get("name") or tool_call.get("function", {}).get("name") or "")
+            if name != self.expected_tool:
+                continue
+            arguments = tool_call.get("arguments") or tool_call.get("input") or {}
+            if not isinstance(arguments, dict):
+                return 0.5
+            present = sum(
+                1 for arg in self.required_args if arg in arguments and arguments[arg] is not None
+            )
+            if not self.required_args:
+                return 1.0
+            return 0.5 + 0.5 * (present / len(self.required_args))
+        return 0.0
