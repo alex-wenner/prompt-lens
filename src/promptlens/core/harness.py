@@ -11,6 +11,7 @@ from promptlens.core.base import (
     Feature,
     Masker,
     PromptMutator,
+    PromptOptimizer,
     Sampler,
     Scorer,
     Segmenter,
@@ -22,6 +23,7 @@ from promptlens.core.result import (
     CoalitionEvaluation,
     CostEstimate,
     FeatureAttribution,
+    OptimizationResult,
     SupplementaryEvaluation,
 )
 from promptlens.maskers import PlaceholderMasker
@@ -40,6 +42,7 @@ class AttributionHarness:
         masker: Masker | None = None,
         sampler: Sampler | None = None,
         supplementary_mutator: PromptMutator | None = None,
+        optimizer: PromptOptimizer | None = None,
         perturbation_scale: str | int = "quick",
         expected_output_tokens: int = 300,
     ) -> None:
@@ -49,6 +52,7 @@ class AttributionHarness:
         self.masker = masker or PlaceholderMasker()
         self.sampler = sampler or _sampler_from_scale(perturbation_scale)
         self.supplementary_mutator = supplementary_mutator
+        self.optimizer = optimizer
         self.perturbation_scale = perturbation_scale
         self.expected_output_tokens = expected_output_tokens
 
@@ -119,6 +123,28 @@ class AttributionHarness:
             cost_estimate=self.estimate(prompt, tools=tools),
             supplementary_evaluations=supplementary_evaluations,
         )
+
+    def optimize(
+        self,
+        prompt: str,
+        tools: ToolDefinitions | None = None,
+        result: AttributionResult | None = None,
+    ) -> OptimizationResult:
+        """Propose an attribution-informed prompt rewrite.
+
+        Runs :meth:`explain` to gather attribution evidence when ``result`` is not
+        supplied, then hands that evidence to the configured ``optimizer``. The
+        proposed rewrite is returned for review and is never adopted automatically.
+        """
+        if self.optimizer is None:
+            msg = "AttributionHarness.optimize requires an optimizer"
+            raise ValueError(msg)
+        attribution = result if result is not None else self.explain(prompt, tools=tools)
+        optimization = self.optimizer.optimize(prompt, attribution)
+        if not isinstance(optimization, OptimizationResult):
+            msg = "Optimizer must return an OptimizationResult"
+            raise TypeError(msg)
+        return optimization
 
     def _run_supplementary_mutations(
         self,

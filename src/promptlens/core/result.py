@@ -198,3 +198,34 @@ class AttributionResult:
                     evaluation.prompt.replace("\n", " ")[:80],
                 )
             Console().print(supplementary_table)
+
+
+@dataclass(frozen=True)
+class OptimizationResult:
+    """An LLM-proposed prompt rewrite derived from attribution evidence."""
+
+    original_prompt: str
+    proposed_prompt: str
+    rationale: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "original_prompt": self.original_prompt,
+            "proposed_prompt": self.proposed_prompt,
+            "rationale": self.rationale,
+            "metadata": self.metadata,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+
+    def print(self) -> None:
+        table = Table(title="promptlens Optimization", show_lines=True)
+        table.add_column("Field")
+        table.add_column("Value")
+        table.add_row("original prompt", self.original_prompt)
+        table.add_row("proposed prompt", self.proposed_prompt)
+        if self.rationale:
+            table.add_row("rationale", self.rationale)
+        Console().print(table)

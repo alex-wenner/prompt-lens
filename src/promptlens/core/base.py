@@ -106,6 +106,18 @@ class PromptMutator(ABC):
         """Return prompt variants to evaluate alongside attribution results."""
 
 
+class PromptOptimizer(ABC):
+    """Proposes an improved prompt from completed attribution evidence."""
+
+    @abstractmethod
+    def optimize(self, prompt: str, result: Any) -> Any:
+        """Return an OptimizationResult proposing a rewrite of ``prompt``.
+
+        ``result`` is an :class:`~promptlens.core.result.AttributionResult`; it is
+        typed as ``Any`` here to avoid a circular import between base and result.
+        """
+
+
 def normalize_coalition(coalition: Iterable[bool], n_features: int) -> Coalition:
     """Validate and normalize a coalition iterable."""
     normalized = tuple(bool(value) for value in coalition)
