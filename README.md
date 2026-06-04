@@ -1,5 +1,14 @@
 # promptlens
 
+In traditional machine learning, understandinf feature contribution is essential in model lifecycle. In this new era,there is 100x (probably more) more usage with 100x less (probably more) visibility on WHY an LLM is doing what it's doing. So, this was my attempt at helping out :)
+
+## Disclaimers
+- Yes, written by AI... to a degree. I do know what I am doing.
+- Functionality like this may get swallowed into provider frameworks. At least I sure hope.
+- Please commit to this! Many, many, many of you are way smarter than I am.
+- Totally open sourced. Do whatever you want, when you take this and monetize it and become a millionare... just think of me someday.
+- No PII of any kind, api keys, etc are collected. Ever. 
+
 Black-box prompt attribution for closed and open LLM APIs, with cost estimation and a CLI.
 
 `promptlens` exposes composable Python primitives for segmenting prompts, masking features,
