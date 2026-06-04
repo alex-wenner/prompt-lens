@@ -1,5 +1,6 @@
-from promptlens import AttributionHarness, OptimizationResult
+from promptlens import AttributionHarness, CompletionOutput, OptimizationResult
 from promptlens.adapters import EchoAdapter
+from promptlens.core.base import ToolDefinitions
 from promptlens.optimizers import LLMPromptOptimizer
 from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import SentenceSegmenter
@@ -31,9 +32,9 @@ def test_optimizer_parses_structured_response() -> None:
     prompt = "Always answer in JSON. Be concise."
 
     class _StructuredAdapter(EchoAdapter):
-        def complete(self, prompt, tools=None):  # type: ignore[no-untyped-def]
-            from promptlens import CompletionOutput
-
+        def complete(
+            self, prompt: str, tools: ToolDefinitions | None = None
+        ) -> CompletionOutput:
             del prompt, tools
             return CompletionOutput(
                 text="REWRITTEN PROMPT:\nRespond only with JSON.\n\nRATIONALE:\nTightened it."
@@ -57,9 +58,9 @@ def test_optimizer_falls_back_to_whole_response() -> None:
     prompt = "Always answer in JSON. Be concise."
 
     class _PlainAdapter(EchoAdapter):
-        def complete(self, prompt, tools=None):  # type: ignore[no-untyped-def]
-            from promptlens import CompletionOutput
-
+        def complete(
+            self, prompt: str, tools: ToolDefinitions | None = None
+        ) -> CompletionOutput:
             del prompt, tools
             return CompletionOutput(text="Respond only with compact JSON.")
 

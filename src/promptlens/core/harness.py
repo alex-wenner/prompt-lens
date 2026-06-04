@@ -139,8 +139,8 @@ class AttributionHarness:
         if self.optimizer is None:
             msg = "AttributionHarness.optimize requires an optimizer"
             raise ValueError(msg)
-        attribution = result if result is not None else self.explain(prompt, tools=tools)
-        optimization = self.optimizer.optimize(prompt, attribution)
+        attribution_result = result if result is not None else self.explain(prompt, tools=tools)
+        optimization = self.optimizer.optimize(prompt, attribution_result)
         if not isinstance(optimization, OptimizationResult):
             msg = "Optimizer must return an OptimizationResult"
             raise TypeError(msg)
