@@ -5,13 +5,24 @@ from __future__ import annotations
 import math
 import statistics
 
-from promptlens.core.base import Adapter, Masker, Sampler, Scorer, Segmenter, ToolDefinitions
+from promptlens.core.base import (
+    Adapter,
+    CompletionOutput,
+    Feature,
+    Masker,
+    PromptMutator,
+    Sampler,
+    Scorer,
+    Segmenter,
+    ToolDefinitions,
+)
 from promptlens.core.pricing import estimate_cost
 from promptlens.core.result import (
     AttributionResult,
     CoalitionEvaluation,
     CostEstimate,
     FeatureAttribution,
+    SupplementaryEvaluation,
 )
 from promptlens.maskers import PlaceholderMasker
 from promptlens.samplers import LeaveOneOutSampler
@@ -28,6 +39,7 @@ class AttributionHarness:
         scorer: Scorer,
         masker: Masker | None = None,
         sampler: Sampler | None = None,
+        supplementary_mutator: PromptMutator | None = None,
         perturbation_scale: str | int = "quick",
         expected_output_tokens: int = 300,
     ) -> None:
@@ -36,6 +48,7 @@ class AttributionHarness:
         self.scorer = scorer
         self.masker = masker or PlaceholderMasker()
         self.sampler = sampler or _sampler_from_scale(perturbation_scale)
+        self.supplementary_mutator = supplementary_mutator
         self.perturbation_scale = perturbation_scale
         self.expected_output_tokens = expected_output_tokens
 
@@ -93,12 +106,50 @@ class AttributionHarness:
             if len(scores) > 1:
                 stderr = statistics.stdev(scores) / math.sqrt(len(scores))
             attributions.append(FeatureAttribution(feature=feature, value=value, stderr=stderr))
+        supplementary_evaluations = self._run_supplementary_mutations(
+            prompt=prompt,
+            features=features,
+            baseline=baseline,
+            tools=tools,
+        )
         return AttributionResult(
             baseline_output=baseline,
             attributions=attributions,
             evaluations=evaluations,
             cost_estimate=self.estimate(prompt, tools=tools),
+            supplementary_evaluations=supplementary_evaluations,
         )
+
+    def _run_supplementary_mutations(
+        self,
+        *,
+        prompt: str,
+        features: list[Feature],
+        baseline: CompletionOutput,
+        tools: ToolDefinitions | None,
+    ) -> list[SupplementaryEvaluation]:
+        if self.supplementary_mutator is None:
+            return []
+        mutations = self.supplementary_mutator.mutate(prompt, features, tools=tools)
+        mutated_prompts = [mutation.prompt for mutation in mutations]
+        outputs = self.adapter.complete_batch(mutated_prompts, tools=tools)
+        if len(outputs) != len(mutations):
+            msg = (
+                f"Adapter.complete_batch returned {len(outputs)} outputs for "
+                f"{len(mutations)} supplementary prompts"
+            )
+            raise ValueError(msg)
+        return [
+            SupplementaryEvaluation(
+                kind="prompt-mutation",
+                feature=mutation.feature,
+                prompt=mutation.prompt,
+                output=output,
+                score=self.scorer.score(baseline, output),
+                metadata=mutation.metadata,
+            )
+            for mutation, output in zip(mutations, outputs, strict=True)
+        ]
 
 
 def _sampler_from_scale(scale: str | int) -> Sampler:

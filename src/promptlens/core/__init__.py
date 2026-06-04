@@ -4,6 +4,8 @@ from promptlens.core.base import (
     CompletionOutput,
     Feature,
     Masker,
+    PromptMutation,
+    PromptMutator,
     Sampler,
     Scorer,
     Segmenter,
@@ -15,6 +17,7 @@ from promptlens.core.result import (
     CoalitionEvaluation,
     CostEstimate,
     FeatureAttribution,
+    SupplementaryEvaluation,
 )
 
 __all__ = [
@@ -32,6 +35,9 @@ __all__ = [
     "Sampler",
     "Scorer",
     "Segmenter",
+    "PromptMutation",
+    "PromptMutator",
+    "SupplementaryEvaluation",
     "estimate_cost",
     "estimate_tokens",
 ]

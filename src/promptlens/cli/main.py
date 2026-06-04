@@ -12,6 +12,7 @@ from promptlens import AttributionHarness, Segmenter
 from promptlens.adapters import EchoAdapter
 from promptlens.cli.factories import build_adapter, build_sampler, build_scorer
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
+from promptlens.mutators import LLMRewriteMutator
 from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import (
     MarkdownSectionSegmenter,
@@ -77,6 +78,7 @@ def _harness(
     sampler_name: str,
     scorer_name: str,
     scorer_config: str | None,
+    supplementary_rewrites: int,
 ) -> AttributionHarness:
     try:
         adapter = build_adapter(
@@ -87,6 +89,14 @@ def _harness(
         )
         sampler = build_sampler(sampler_name, scale=scale)
         scorer = build_scorer(scorer_name, config_path=scorer_config)
+        if supplementary_rewrites < 0:
+            msg = "supplementary rewrites must be >= 0"
+            raise ValueError(msg)
+        supplementary_mutator = (
+            LLMRewriteMutator(adapter, rewrites_per_feature=supplementary_rewrites)
+            if supplementary_rewrites
+            else None
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     return AttributionHarness(
@@ -94,6 +104,7 @@ def _harness(
         segmenter=_segmenter(segmenter_name),
         scorer=scorer,
         sampler=sampler,
+        supplementary_mutator=supplementary_mutator,
         perturbation_scale=_parse_scale(scale),
     )
 
@@ -116,6 +127,12 @@ def estimate(
         str | None, typer.Option(help="Comma-separated model names to compare.")
     ] = None,
     scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
+    supplementary_rewrites: Annotated[
+        int,
+        typer.Option(
+            help="Optional LLM prompt rewrites per feature to evaluate as supplementary analysis."
+        ),
+    ] = 0,
 ) -> None:
     """Preview attribution cost without provider calls."""
     prompt_text = _read_prompt(prompt)
@@ -168,6 +185,7 @@ def explain(
         sampler_name=sampler,
         scorer_name=scorer,
         scorer_config=scorer_config,
+        supplementary_rewrites=supplementary_rewrites,
     ).explain(prompt_text, tools=_read_tools(tools))
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")

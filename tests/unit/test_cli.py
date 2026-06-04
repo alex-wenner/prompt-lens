@@ -44,3 +44,28 @@ def test_explain_accepts_scorer_and_sampler_flags(tmp_path) -> None:
 
     assert result.exit_code == 0
     assert "promptlens Attribution" in result.output
+
+
+def test_explain_can_include_supplementary_rewrites(tmp_path) -> None:
+    output = tmp_path / "result.json"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+            "--supplementary-rewrites",
+            "1",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Supplementary prompt mutations" in result.output
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert len(data["supplementary_evaluations"]) == 2
+    assert data["supplementary_evaluations"][0]["kind"] == "prompt-mutation"
