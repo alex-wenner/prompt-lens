@@ -120,12 +120,7 @@ def build_scorer(name: str, *, config_path: str | None = None) -> Scorer:
         if not isinstance(expected_tool, str) or not expected_tool:
             msg = "tool-call scorer requires scorer config with non-empty expected_tool"
             raise ValueError(msg)
-        required_args = config.get("required_args", [])
-        if not isinstance(required_args, list) or not all(
-            isinstance(item, str) for item in required_args
-        ):
-            msg = "tool-call scorer required_args must be a list of strings"
-            raise ValueError(msg)
+        required_args = _required_args_from_config(config)
         return ToolAccuracyScorer(expected_tool=expected_tool, required_args=required_args)
     msg = f"Unsupported scorer: {name}"
     raise ValueError(msg)
@@ -156,6 +151,16 @@ def _repeats_from_scale(scale: str | int) -> int:
         msg = f"Unsupported perturbation scale: {scale}"
         raise ValueError(msg)
     return repeats
+
+
+def _required_args_from_config(config: dict[str, Any]) -> list[str]:
+    required_args = config.get("required_args", [])
+    if not isinstance(required_args, list) or not all(
+        isinstance(item, str) for item in required_args
+    ):
+        msg = "tool-call scorer required_args must be a list of strings"
+        raise ValueError(msg)
+    return required_args
 
 
 def _load_config(path: str | None) -> dict[str, Any]:

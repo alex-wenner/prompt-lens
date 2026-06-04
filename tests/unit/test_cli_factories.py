@@ -57,14 +57,14 @@ def test_openai_compatible_accepts_injected_client() -> None:
     assert adapter._client is client
 
 
-def test_build_sampler_uses_scale_repeats() -> None:
+def test_build_sampler_converts_scale_to_repeats() -> None:
     sampler = build_sampler("leave-one-out", scale="standard")
 
     assert isinstance(sampler, LeaveOneOutSampler)
     assert sampler.estimate_evaluations(2) == 6
 
 
-def test_build_scorer_selects_length_embedding_and_tool_call(tmp_path) -> None:
+def test_build_scorer_creates_correct_scorer_types(tmp_path) -> None:
     tool_config = tmp_path / "tool-scorer.json"
     tool_config.write_text(
         json.dumps({"expected_tool": "search", "required_args": ["query"]}),
