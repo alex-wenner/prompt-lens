@@ -69,3 +69,27 @@ def test_explain_can_include_supplementary_rewrites(tmp_path) -> None:
     data = json.loads(output.read_text(encoding="utf-8"))
     assert len(data["supplementary_evaluations"]) == 2
     assert data["supplementary_evaluations"][0]["kind"] == "prompt-mutation"
+
+
+def test_optimize_command_runs_with_echo(tmp_path) -> None:
+    output = tmp_path / "optimized.json"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "optimize",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "promptlens Optimization" in result.output
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["original_prompt"] == "Alpha sentence. Beta sentence."
+    assert data["proposed_prompt"]
+    assert "caveat" in data["metadata"]

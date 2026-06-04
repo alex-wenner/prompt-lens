@@ -73,6 +73,14 @@ result.print()
 
 For robustness checks, `explain` can also run optional supplementary LLM rewrites of each feature with `--supplementary-rewrites`. These prompt mutations are reported separately from attribution scores so leave-one-out attribution remains interpretable while still surfacing wording sensitivity.
 
+To turn attribution evidence into a concrete prompt edit, `promptlens optimize` runs a leave-one-out sweep and then asks the model to rewrite the whole prompt with that evidence in hand — strengthening load-bearing instructions and pruning inert text:
+
+```bash
+promptlens optimize --prompt ./prompt.md --provider openai --model gpt-4o-mini
+```
+
+The proposed rewrite is returned for review, never adopted automatically, and the result metadata carries a caveat that embedding/length scores can hide precision-critical changes — re-run attribution and task-level checks before shipping the edit. From the SDK, pass an `LLMPromptOptimizer` to `AttributionHarness(..., optimizer=...)` and call `harness.optimize(prompt)`.
+
 ## Learn more
 
 For a deeper explanation of the attribution workflow, components, provider adapters, CLI options, and interpretation tips, see the [detailed guide](docs/detailed-guide.md).
