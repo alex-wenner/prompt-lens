@@ -37,7 +37,10 @@ _DEFAULT_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 
 class _TextEmbeddingClient:
+    """Deterministic local embedding fallback for CLI smoke runs."""
+
     def embed(self, text: str) -> Sequence[float]:
+        """Return simple text-shape features without making provider calls."""
         checksum = sum(ord(char) for char in text)
         return (
             float(len(text)),
@@ -77,7 +80,7 @@ def build_adapter(
         api_key = (
             os.environ.get("OPENAI_COMPATIBLE_API_KEY")
             or os.environ.get("OPENAI_API_KEY")
-            or "not-needed"
+            or "promptlens-compatible-provider-placeholder"
         )
         return OpenAICompatibleAdapter(
             model=model_id,
