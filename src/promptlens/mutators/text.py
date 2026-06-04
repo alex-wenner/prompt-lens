@@ -58,7 +58,10 @@ class LLMRewriteMutator(PromptMutator):
 
 def _mark_feature(prompt: str, features: Sequence[Feature], feature: Feature) -> str:
     if feature.start is not None and feature.end is not None:
-        return f"{prompt[: feature.start]}<mutate>{prompt[feature.start:feature.end]}</mutate>{prompt[feature.end:]}"
+        return (
+            f"{prompt[: feature.start]}<mutate>{prompt[feature.start:feature.end]}"
+            f"</mutate>{prompt[feature.end:]}"
+        )
     parts = [
         f"<mutate>{item.text}</mutate>" if item == feature else item.text
         for item in features

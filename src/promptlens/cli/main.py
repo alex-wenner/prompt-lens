@@ -127,12 +127,6 @@ def estimate(
         str | None, typer.Option(help="Comma-separated model names to compare.")
     ] = None,
     scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
-    supplementary_rewrites: Annotated[
-        int,
-        typer.Option(
-            help="Optional LLM prompt rewrites per feature to evaluate as supplementary analysis."
-        ),
-    ] = 0,
 ) -> None:
     """Preview attribution cost without provider calls."""
     prompt_text = _read_prompt(prompt)
@@ -172,6 +166,12 @@ def explain(
         typer.Option(help="Optional JSON scorer config path."),
     ] = None,
     scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
+    supplementary_rewrites: Annotated[
+        int,
+        typer.Option(
+            help="Optional LLM prompt rewrites per feature to evaluate as supplementary analysis."
+        ),
+    ] = 0,
 ) -> None:
     """Run attribution using the SDK pipeline."""
     prompt_text = _read_prompt(prompt)
