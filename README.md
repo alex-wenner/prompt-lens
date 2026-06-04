@@ -2,7 +2,7 @@
 
 `promptlens` is a black-box prompt attribution toolkit for LLM prompts. It helps you see which parts of a prompt, tool schema, or instruction stack move a model's output the most—because "the model just vibes" is not an observability strategy.
 
-In traditional machine learning, understanding feature contribution is part of the model lifecycle. LLM applications often ship with far more usage and far less visibility into why a model did what it did. `promptlens` is a small, composable attempt to close that gap.
+In traditional machine learning, understanding feature contribution is essential in the model lifecycle. In this new era, there is 100x (probably more) more usage with 100x less (probably more) visibility into WHY an LLM is doing what it's doing. So, this was my attempt at helping out :)
 
 ## What it does
 
