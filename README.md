@@ -77,8 +77,8 @@ For a deeper explanation of the attribution workflow, components, provider adapt
 
 ## Disclaimers
 
-- Yes, AI helped write parts of this. The humans remain accountable; the robots are not getting commit access unsupervised.
-- Provider frameworks may eventually absorb functionality like this. Honestly, great. Fewer bespoke dashboards, more weekends.
-- Contributions are welcome. Many of you are smarter than me, and I am emotionally prepared for your pull requests.
-- This is open source. If you turn it into a wildly profitable observability empire, please at least name a conference-room fern after me.
-- `promptlens` does not collect PII, API keys, prompts, outputs, or secrets. Ever.
+- Yes, written by AI... to a degree. I do know what I am doing.
+- Functionality like this may get swallowed into provider frameworks. At least I sure hope.
+- Please commit to this! Many, many, many of you are way smarter than I am.
+- Totally open sourced. Do whatever you want, when you take this and monetize it and become a millionaire... just think of me someday.
+- No PII of any kind, API keys, etc. are collected. Ever.
