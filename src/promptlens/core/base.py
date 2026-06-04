@@ -32,6 +32,15 @@ class CompletionOutput:
     raw: Any | None = None
 
 
+@dataclass(frozen=True)
+class PromptMutation:
+    """A supplementary prompt variant generated outside attribution scoring."""
+
+    prompt: str
+    feature: Feature | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class Adapter(ABC):
     """Thin provider wrapper for a model completion API."""
 
@@ -82,6 +91,19 @@ class Sampler(ABC):
     @abstractmethod
     def estimate_evaluations(self, n_features: int) -> int:
         """Return the expected number of non-baseline evaluations."""
+
+
+class PromptMutator(ABC):
+    """Generates supplementary prompt variants for robustness analysis."""
+
+    @abstractmethod
+    def mutate(
+        self,
+        prompt: str,
+        features: Sequence[Feature],
+        tools: ToolDefinitions | None = None,
+    ) -> list[PromptMutation]:
+        """Return prompt variants to evaluate alongside attribution results."""
 
 
 def normalize_coalition(coalition: Iterable[bool], n_features: int) -> Coalition:

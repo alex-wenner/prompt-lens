@@ -58,6 +58,12 @@ The default `PlaceholderMasker` rebuilds a prompt from the selected coalition of
 
 Custom maskers can be useful when whitespace, formatting, or domain-specific placeholders matter.
 
+### Supplementary prompt mutations
+
+Supplementary mutators generate prompt variants for robustness checks without changing the core attribution math. `LLMRewriteMutator` asks an adapter to rewrite one feature at a time, then the harness scores the target model's output for those rewritten prompts against the same baseline output.
+
+These results are stored in `AttributionResult.supplementary_evaluations` and rendered separately from feature attributions. Treat them as wording-sensitivity evidence, not as leave-one-out attribution values, because an LLM rewrite can change semantics or style in ways that are less controlled than masking.
+
 ### Scorers
 
 Scorers convert output differences into numeric signals.
@@ -114,6 +120,16 @@ promptlens explain \
   --prompt "Always answer in JSON. Include a confidence score." \
   --segmenter sentences \
   --output attribution.json
+```
+
+Add supplementary LLM rewrite checks when you want to inspect sensitivity to paraphrases or richer prompt mutations:
+
+```bash
+promptlens explain \
+  --prompt "Always answer in JSON. Include a confidence score." \
+  --provider openai \
+  --model gpt-4o-mini \
+  --supplementary-rewrites 1
 ```
 
 ### Work with tools

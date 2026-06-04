@@ -96,6 +96,32 @@ class FeatureAttribution:
 
 
 @dataclass(frozen=True)
+class SupplementaryEvaluation:
+    """A non-attribution prompt variant evaluation."""
+
+    kind: str
+    prompt: str
+    output: CompletionOutput
+    score: float
+    feature: Feature | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "feature": asdict(self.feature) if self.feature else None,
+            "prompt": self.prompt,
+            "output": {
+                "text": self.output.text,
+                "tool_calls": self.output.tool_calls,
+                "logprobs": self.output.logprobs,
+            },
+            "score": self.score,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(frozen=True)
 class AttributionResult:
     """Rich attribution output for SDK and CLI consumers."""
 
@@ -103,6 +129,7 @@ class AttributionResult:
     attributions: list[FeatureAttribution]
     evaluations: list[CoalitionEvaluation]
     cost_estimate: CostEstimate | None = None
+    supplementary_evaluations: list[SupplementaryEvaluation] = field(default_factory=list)
 
     def ranked(self) -> list[tuple[FeatureAttribution, float]]:
         """Return attributions sorted by importance with each one's normalized share.
@@ -131,6 +158,9 @@ class AttributionResult:
                 for attribution in self.attributions
             ],
             "evaluations": [evaluation.to_dict() for evaluation in self.evaluations],
+            "supplementary_evaluations": [
+                evaluation.to_dict() for evaluation in self.supplementary_evaluations
+            ],
             "cost_estimate": self.cost_estimate.to_dict() if self.cost_estimate else None,
         }
 
@@ -154,3 +184,17 @@ class AttributionResult:
                 attribution.feature.text.replace("\n", " ")[:80],
             )
         Console().print(table)
+        if self.supplementary_evaluations:
+            supplementary_table = Table(title="Supplementary prompt mutations")
+            supplementary_table.add_column("Kind")
+            supplementary_table.add_column("Feature")
+            supplementary_table.add_column("Score", justify="right")
+            supplementary_table.add_column("Prompt")
+            for evaluation in self.supplementary_evaluations:
+                supplementary_table.add_row(
+                    evaluation.kind,
+                    evaluation.feature.name if evaluation.feature else "",
+                    f"{evaluation.score:.4f}",
+                    evaluation.prompt.replace("\n", " ")[:80],
+                )
+            Console().print(supplementary_table)

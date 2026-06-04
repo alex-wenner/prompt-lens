@@ -10,7 +10,9 @@ import typer
 
 from promptlens import AttributionHarness, Segmenter
 from promptlens.adapters import EchoAdapter
+from promptlens.cli.factories import build_adapter, build_sampler, build_scorer
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
+from promptlens.mutators import LLMRewriteMutator
 from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import (
     MarkdownSectionSegmenter,
@@ -65,6 +67,48 @@ def _offline_harness(
     )
 
 
+def _harness(
+    *,
+    provider: str,
+    model: str | None,
+    segmenter_name: str,
+    scale: str | int,
+    temperature: float,
+    base_url: str | None,
+    sampler_name: str,
+    scorer_name: str,
+    scorer_config: str | None,
+    supplementary_rewrites: int,
+) -> AttributionHarness:
+    try:
+        adapter = build_adapter(
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            base_url=base_url,
+        )
+        sampler = build_sampler(sampler_name, scale=scale)
+        scorer = build_scorer(scorer_name, config_path=scorer_config)
+        if supplementary_rewrites < 0:
+            msg = "The --supplementary-rewrites value must be non-negative"
+            raise ValueError(msg)
+        supplementary_mutator = (
+            LLMRewriteMutator(adapter, rewrites_per_feature=supplementary_rewrites)
+            if supplementary_rewrites
+            else None
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    return AttributionHarness(
+        adapter=adapter,
+        segmenter=_segmenter(segmenter_name),
+        scorer=scorer,
+        sampler=sampler,
+        supplementary_mutator=supplementary_mutator,
+        perturbation_scale=_parse_scale(scale),
+    )
+
+
 def _parse_scale(scale: str | int) -> str | int:
     if isinstance(scale, str) and scale.isdigit():
         return int(scale)
@@ -95,18 +139,54 @@ def estimate(
 def explain(
     prompt: Annotated[str, typer.Option(help="Prompt text or path to a prompt file.")],
     output: Annotated[str | None, typer.Option(help="Optional JSON output path.")] = None,
-    model: Annotated[str, typer.Option(help="Offline model id for MVP smoke runs.")] = "echo",
+    provider: Annotated[
+        str,
+        typer.Option(help="Provider type: echo, openai, anthropic, bedrock, or openai-compatible."),
+    ] = "echo",
+    model: Annotated[
+        str | None,
+        typer.Option(help="Model id. Defaults to provider-specific environment/default model."),
+    ] = None,
+    temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
+    base_url: Annotated[
+        str | None,
+        typer.Option(help="Base URL for openai-compatible providers."),
+    ] = None,
     segmenter: Annotated[
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
     ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
+    sampler: Annotated[str, typer.Option(help="leave-one-out.")] = "leave-one-out",
+    scorer: Annotated[
+        str,
+        typer.Option(help="length, embedding, logprob, or tool-call."),
+    ] = "length",
+    scorer_config: Annotated[
+        str | None,
+        typer.Option(help="Optional JSON scorer config path."),
+    ] = None,
     scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
+    supplementary_rewrites: Annotated[
+        int,
+        typer.Option(
+            help="Optional LLM prompt rewrites per feature to evaluate as supplementary analysis."
+        ),
+    ] = 0,
 ) -> None:
-    """Run offline attribution using the SDK pipeline."""
+    """Run attribution using the SDK pipeline."""
     prompt_text = _read_prompt(prompt)
-    result = _offline_harness(model=model, segmenter_name=segmenter, scale=scale).explain(
-        prompt_text, tools=_read_tools(tools)
-    )
+    result = _harness(
+        provider=provider,
+        model=model,
+        segmenter_name=segmenter,
+        scale=scale,
+        temperature=temperature,
+        base_url=base_url,
+        sampler_name=sampler,
+        scorer_name=scorer,
+        scorer_config=scorer_config,
+        supplementary_rewrites=supplementary_rewrites,
+    ).explain(prompt_text, tools=_read_tools(tools))
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")
     result.print()

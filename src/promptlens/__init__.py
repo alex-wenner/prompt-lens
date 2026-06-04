@@ -11,9 +11,12 @@ from promptlens.core import (
     Feature,
     FeatureAttribution,
     Masker,
+    PromptMutation,
+    PromptMutator,
     Sampler,
     Scorer,
     Segmenter,
+    SupplementaryEvaluation,
 )
 
 __all__ = [
@@ -27,7 +30,10 @@ __all__ = [
     "Feature",
     "FeatureAttribution",
     "Masker",
+    "PromptMutation",
+    "PromptMutator",
     "Sampler",
     "Scorer",
     "Segmenter",
+    "SupplementaryEvaluation",
 ]
