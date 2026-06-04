@@ -38,7 +38,7 @@ _DEFAULT_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 class _TextEmbeddingClient:
     def embed(self, text: str) -> Sequence[float]:
-        checksum = sum(ord(character) for character in text)
+        checksum = sum(ord(char) for char in text)
         return (
             float(len(text)),
             float(text.count(" ")),

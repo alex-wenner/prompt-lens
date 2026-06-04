@@ -130,7 +130,7 @@ def explain(
     output: Annotated[str | None, typer.Option(help="Optional JSON output path.")] = None,
     provider: Annotated[
         str,
-        typer.Option(help="echo, openai, anthropic, bedrock, or openai-compatible."),
+        typer.Option(help="Provider type: echo, openai, anthropic, bedrock, or openai-compatible."),
     ] = "echo",
     model: Annotated[
         str | None,
