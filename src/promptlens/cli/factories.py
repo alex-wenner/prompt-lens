@@ -41,11 +41,11 @@ class _TextEmbeddingClient:
 
     def embed(self, text: str) -> Sequence[float]:
         """Return simple text-shape features without making provider calls."""
-        checksum = sum(ord(char) for char in text)
+        char_sum = sum(ord(char) for char in text)
         return (
             float(len(text)),
             float(text.count(" ")),
-            float(checksum % 997),
+            float(char_sum % 997),
         )
 
 
@@ -77,15 +77,18 @@ def build_adapter(
         if not endpoint:
             msg = "openai-compatible provider requires --base-url or OPENAI_COMPATIBLE_BASE_URL"
             raise ValueError(msg)
-        api_key = (
-            os.environ.get("OPENAI_COMPATIBLE_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or "promptlens-compatible-provider-placeholder"
-        )
+        api_key = os.environ.get("OPENAI_COMPATIBLE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            return OpenAICompatibleAdapter(
+                model=model_id,
+                base_url=endpoint,
+                api_key=api_key,
+                temperature=temperature,
+                client=client,
+            )
         return OpenAICompatibleAdapter(
             model=model_id,
             base_url=endpoint,
-            api_key=api_key,
             temperature=temperature,
             client=client,
         )
