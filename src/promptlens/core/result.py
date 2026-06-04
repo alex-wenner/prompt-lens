@@ -11,6 +11,8 @@ from rich.table import Table
 
 from promptlens.core.base import Coalition, CompletionOutput, Feature
 
+_MAX_BAR_WIDTH = 20
+
 
 @dataclass(frozen=True)
 class CostEstimate:
@@ -143,7 +145,7 @@ class AttributionResult:
         table.add_column("Weight")
         table.add_column("Text")
         for attribution, share in self.ranked():
-            bar = "█" * round(share * 20)
+            bar = "█" * round(share * _MAX_BAR_WIDTH)
             table.add_row(
                 attribution.feature.name,
                 f"{attribution.value:.4f}",

@@ -62,6 +62,12 @@ class AttributionHarness:
         coalitions = list(self.sampler.sample(len(features)))
         masked_prompts = [self.masker.mask(features, coalition) for coalition in coalitions]
         candidates = self.adapter.complete_batch(masked_prompts, tools=tools)
+        if len(candidates) != len(coalitions):
+            msg = (
+                f"Adapter.complete_batch returned {len(candidates)} outputs for "
+                f"{len(coalitions)} prompts"
+            )
+            raise ValueError(msg)
         evaluations: list[CoalitionEvaluation] = []
         attributions: list[FeatureAttribution] = []
         feature_scores: dict[int, list[float]] = {index: [] for index in range(len(features))}

@@ -21,6 +21,8 @@ from promptlens.segmenters import (
 
 app = typer.Typer(help="Black-box prompt attribution for LLM prompts.")
 
+_SCALE_HELP = "Perturbation scale: quick, standard, full, or an integer repeat count."
+
 
 def _read_prompt(prompt: str) -> str:
     path = Path(prompt)
@@ -59,8 +61,14 @@ def _offline_harness(
         adapter=EchoAdapter(model=model),
         segmenter=_segmenter(segmenter_name),
         scorer=LengthDriftScorer(),
-        perturbation_scale=scale,
+        perturbation_scale=_parse_scale(scale),
     )
+
+
+def _parse_scale(scale: str | int) -> str | int:
+    if isinstance(scale, str) and scale.isdigit():
+        return int(scale)
+    return scale
 
 
 @app.command()
@@ -74,9 +82,7 @@ def estimate(
     compare: Annotated[
         str | None, typer.Option(help="Comma-separated model names to compare.")
     ] = None,
-    scale: Annotated[
-        str, typer.Option(help="Perturbation scale: quick, standard, or full.")
-    ] = "quick",
+    scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
 ) -> None:
     """Preview attribution cost without provider calls."""
     prompt_text = _read_prompt(prompt)
@@ -94,9 +100,7 @@ def explain(
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
     ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
-    scale: Annotated[
-        str, typer.Option(help="Perturbation scale: quick, standard, or full.")
-    ] = "quick",
+    scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
 ) -> None:
     """Run offline attribution using the SDK pipeline."""
     prompt_text = _read_prompt(prompt)
