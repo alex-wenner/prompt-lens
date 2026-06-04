@@ -14,7 +14,6 @@ class StaticMutator(PromptMutator):
         features: Sequence[Feature],
         tools: ToolDefinitions | None = None,
     ) -> list[PromptMutation]:
-        del prompt, tools
         return [
             PromptMutation(
                 prompt="Alpha rewritten. Beta sentence.",

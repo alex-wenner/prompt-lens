@@ -90,7 +90,7 @@ def _harness(
         sampler = build_sampler(sampler_name, scale=scale)
         scorer = build_scorer(scorer_name, config_path=scorer_config)
         if supplementary_rewrites < 0:
-            msg = "supplementary rewrites must be >= 0"
+            msg = "The --supplementary-rewrites value must be non-negative"
             raise ValueError(msg)
         supplementary_mutator = (
             LLMRewriteMutator(adapter, rewrites_per_feature=supplementary_rewrites)

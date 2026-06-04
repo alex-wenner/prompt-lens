@@ -63,7 +63,7 @@ def _mark_feature(prompt: str, features: Sequence[Feature], feature: Feature) ->
             f"</mutate>{prompt[feature.end:]}"
         )
     parts = [
-        f"<mutate>{item.text}</mutate>" if item == feature else item.text
+        f"<mutate>{item.text}</mutate>" if item is feature else item.text
         for item in features
     ]
     return " ".join(parts)
