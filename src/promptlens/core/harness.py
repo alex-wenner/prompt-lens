@@ -85,6 +85,13 @@ class AttributionHarness:
         coalitions = list(self.sampler.sample(len(features)))
         samples = self.samples_per_coalition
         masked_prompts = [self.masker.mask(features, coalition) for coalition in coalitions]
+        # Objective (task-quality) scorers ignore the baseline and return higher
+        # values when the candidate did the desired thing. To turn that into an
+        # attribution signal we measure how far the objective drops when a feature
+        # is masked, relative to the baseline's own objective. Drift scorers are
+        # already attribution signals, so their raw score is used directly.
+        objective = self.scorer.orientation == "objective"
+        baseline_objective = self.scorer.score(baseline, baseline) if objective else 0.0
         # Evaluate every coalition ``samples`` times so non-deterministic providers
         # yield a distribution per coalition rather than a single draw. Prompts are
         # expanded contiguously (coalition-major) so each group maps back cleanly.
@@ -108,6 +115,14 @@ class AttributionHarness:
             group = candidates[c_index * samples : (c_index + 1) * samples]
             sample_scores = [self.scorer.score(baseline, candidate) for candidate in group]
             mean_score = sum(sample_scores) / len(sample_scores)
+            # For objective scorers the stored coalition score remains the raw
+            # task-quality value (transparent), while attribution accumulates the
+            # drop from the baseline objective.
+            signal_samples = (
+                [baseline_objective - score for score in sample_scores]
+                if objective
+                else sample_scores
+            )
             evaluations.append(
                 CoalitionEvaluation(
                     coalition=coalition,
@@ -118,7 +133,7 @@ class AttributionHarness:
             )
             for index, included in enumerate(coalition):
                 if not included:
-                    feature_scores[index].extend(sample_scores)
+                    feature_scores[index].extend(signal_samples)
         for index, feature in enumerate(features):
             scores = feature_scores[index]
             value = sum(scores) / len(scores) if scores else 0.0

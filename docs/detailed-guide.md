@@ -83,7 +83,7 @@ Available adapters include:
 
 Provider adapters are intentionally thin. They should make it easy to swap providers while keeping the attribution logic stable.
 
-Coalition evaluations are independent, so `Adapter.complete_batch()` defines a batch path the harness always uses. The default implementation calls `complete()` per prompt, but `OpenAIAdapter` and `AnthropicAdapter` accept `use_batch_api=True` to route batches through the provider's native Batch / Message Batches API (roughly 50% cheaper, asynchronous with polling via `poll_interval_seconds`). It is opt-in because batch jobs trade latency for cost; the default behavior is unchanged.
+Coalition evaluations are independent, so `Adapter.complete_batch()` defines a batch path the harness always uses. The default implementation calls `complete()` per prompt, but `OpenAIAdapter` and `AnthropicAdapter` accept `use_batch_api=True` to route batches through the provider's native Batch / Message Batches API (roughly 50% cheaper, asynchronous with polling via `poll_interval_seconds`). It is opt-in because batch jobs trade latency for cost; the default behavior is unchanged. From the CLI, pass `--batch-api` on `explain` or `optimize` to enable it for the OpenAI and Anthropic providers.
 
 ### Segmenters
 
@@ -120,9 +120,20 @@ Scorers convert output differences into numeric signals.
 - `EmbeddingScorer` measures semantic drift with an embedding client.
 - `LogprobScorer` compares average token log probabilities when the adapter provides them.
 - `ToolAccuracyScorer` checks whether a completion selected an expected tool and required arguments.
-- `CompositeScorer` combines several scorers as a weighted sum, e.g. `0.7` embedding drift plus `0.3` tool accuracy, when "what changed" is best captured by more than one signal.
+- `CompositeScorer` combines several scorers as a weighted sum, e.g. `0.7` embedding drift plus `0.3` length drift, when "what changed" is best captured by more than one signal.
 
 The right scorer depends on what "changed" means for your task. For factual answer quality, semantic distance may be useful. For tool routing, tool accuracy is usually more direct.
+
+#### Drift scorers vs. objective scorers
+
+Scorers declare an `orientation` because "a higher score" means opposite things depending on the question:
+
+- **Drift scorers** (`orientation = "drift"`, the default: `LengthDriftScorer`, `EmbeddingScorer`, `LogprobScorer`) measure how far the candidate output moved from the baseline. A larger score is already an attribution signal, so masking an influential feature produces large drift.
+- **Objective scorers** (`orientation = "objective"`: `ToolAccuracyScorer`) measure task quality and usually ignore the baseline — a higher value means the candidate did the desired thing better (e.g. picked the expected tool). A raw objective value is **not** a drift signal.
+
+For objective scorers the harness does *not* treat the raw value as attribution. It first measures the baseline's own objective, then attributes a feature by how far the objective **drops** when that feature is masked. So a feature whose removal still yields the correct tool call correctly receives near-zero attribution, while a feature whose removal breaks the tool call receives high attribution. The raw per-coalition objective is still stored on each `CoalitionEvaluation` for transparency.
+
+Because the two orientations point in opposite directions for attribution, `CompositeScorer` requires all of its components to share one orientation rather than silently summing a drift signal with a quality signal.
 
 ### Samplers and perturbation scale
 
@@ -134,6 +145,8 @@ The built-in leave-one-out sampler evaluates each feature by masking it independ
 - integer: custom repeat count.
 
 Repeats are helpful when using non-deterministic providers. More repeats can produce standard errors, but they also increase cost. Math remains undefeated.
+
+`RandomCoalitionSampler` (`--sampler random` on the CLI) masks several features at once: each coalition independently includes every feature with probability `0.5`. Because the drift attributed to a feature is then averaged over many partially-masked contexts rather than the single full-prompt context leave-one-out uses, the random sampler is sensitive to interactions a pure leave-one-out sweep misses. It is an approximation, so it needs enough coalitions to stabilize (the CLI scales the coalition count with `--scale`) and supports a `seed` for reproducibility.
 
 For distributional attribution you can also keep a single leave-one-out sweep but evaluate each coalition multiple times with `samples_per_coalition` (`--samples-per-coalition` on the CLI). At temperature > 0 this turns each coalition into a small distribution: per-coalition scores are averaged, every sample feeds the feature's standard error, and the cost estimator multiplies its evaluation count so the spend preview stays honest.
 
@@ -246,9 +259,9 @@ The library does not collect telemetry, prompts, outputs, PII, API keys, or secr
 
 ## Current limitations
 
-- Leave-one-out attribution can miss interactions where two features only matter together.
-- Cost grows with feature count, repeat count, and samples per coalition.
-- Scores are only as meaningful as the selected scorer.
-- Provider adapters are intentionally minimal and may not expose every provider option.
+- Leave-one-out attribution can miss interactions where two features only matter together; `RandomCoalitionSampler` approximates interaction effects but needs more samples.
+- Cost grows with feature count, repeat count, samples per coalition, and random coalition count.
+- Scores are only as meaningful as the selected scorer, and drift vs. objective orientation must match your question.
+- Provider adapters are intentionally minimal: they flatten prompts into a single user message and may not expose every provider option or native multi-turn / system-message structure.
 
 In other words: `promptlens` is a lens, not an oracle. Useful lenses still beat squinting at production logs and whispering, "please make sense."
