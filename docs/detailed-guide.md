@@ -16,6 +16,48 @@ A prompt attribution run has five steps:
 
 The default sampler uses leave-one-out occlusion: if a prompt has three features, `promptlens` evaluates three masked prompts, each with one feature removed or replaced. A larger score means the output drifted more when that feature was hidden, so the feature receives more attribution.
 
+## What is a "Feature"?
+
+In `promptlens`, a **feature** is the atomic, attributable unit of a prompt or tool schema. 
+
+Unlike traditional NLP or deep learning interpretability frameworks that operate on raw token-level gradients (which are highly noisy, expensive to estimate, and hard to translate into actionable prompt engineering), `promptlens` operates on coarse-grained, high-level structural or semantic units.
+
+### Anatomy of a Feature
+
+Under the hood, every feature is represented by the `Feature` dataclass (defined in `src/promptlens/core/base.py`) which contains:
+
+* **`name`** (`str`): A unique identifier for the feature (e.g., `"sentence_1"`, `"paragraph_3"`, `"tool:get_weather:parameter:location"`). This name is used to identify the feature in CLI tables, visualization outputs, and JSON/dictionary exports.
+* **`text`** (`str`): The underlying prompt or tool schema text represented by this feature. When a feature is active in a test run, this text is rendered in the prompt. When it is masked/occluded, this text is altered or removed by the `Masker`.
+* **`start` / `end`** (`int | None`): Character offsets tracking the feature's exact span inside the original prompt. This is useful for reconstructing original segments and visualization.
+* **`metadata`** (`dict[str, Any]`): Optional dictionary for rich domain-specific context. For example, a tool feature might include the complete dictionary representation of its tool schema under `metadata["tools"]` or the specific category/kind of feature under `metadata["kind"]`.
+
+### Types of Features
+
+`promptlens` classifies and extracts features based on the chosen segmenter:
+
+#### 1. Text Features
+* **Sentences** (`SentenceSegmenter`): Splitting prompts into sentence-like spans. Best for short prompts where every sentence may contain a distinct instruction.
+* **Paragraphs** (`ParagraphSegmenter`): Splitting on blank lines (`\n\n`). Best for structured prompt documents that use lists or multiple paragraphs per concept.
+* **Markdown Sections** (`MarkdownSectionSegmenter`): Splitting by markdown headings (e.g., `#`, `##`). Best for large-scale instructions, system prompts, or multi-page policy guidelines.
+
+#### 2. Tool Features
+When optimizing tool-use or agent workflows, the tool schema itself is often what needs attribution. The `ToolSegmenter` breaks down JSON schemas into features at three granularities:
+* **Whole Tool** (`granularity="tool"`): Each tool schema is treated as a single opaque feature. Useful for identifying which tool is causing routing confusion.
+* **Tool Field** (`granularity="field"`): Splits tools into distinct features for their description and their complete parameters block. Useful for checking if tool descriptions are carrying their weight.
+* **Tool Parameter** (`granularity="parameter"`): Splits tool schemas down to individual parameters. Useful for highly detailed debugging of exact parameter specifications and field-level tool selection.
+
+#### 3. Mixed Features
+When running text-level attribution (like `SentenceSegmenter`) on a prompt that contains a tool configuration, `promptlens` automatically appends the complete tools schema as a single, opaque mixed feature (`name="tools"`) at the end of the text features. This lets you measure text-level instruction attribution in the context of tool availability.
+
+### How Features Flow through the Pipeline
+
+The lifecycle of a feature during a prompt attribution run looks like this:
+
+1. **Extraction (Segmenting)**: The `Segmenter` converts the input prompt/tools into an ordered list of `Feature` objects.
+2. **Perturbation (Masking)**: For each evaluation run, the `Sampler` decides which features to keep active. The `Masker` receives the `Feature` sequence and reconstructs the prompt, replacing or omitting the `text` of masked features (by dropping them, inserting a placeholder, or replacing them with length-preserving filler).
+3. **Measurement (Scoring)**: The candidate prompt with some features masked is evaluated against the baseline prompt. The model's response is scored, and the difference is measured.
+4. **Attribution (Ranking)**: The resulting drift score is associated back to each feature via its `name`. `promptlens` averages these scores across multiple sweeps (if configured) and outputs the ranked importance of each `Feature`.
+
 ## Core components
 
 ### `AttributionHarness`
