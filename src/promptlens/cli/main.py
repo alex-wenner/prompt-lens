@@ -82,6 +82,7 @@ def _harness(
     supplementary_rewrites: int,
     masker_name: str = "placeholder",
     samples_per_coalition: int = 1,
+    use_batch_api: bool = False,
     with_optimizer: bool = False,
 ) -> AttributionHarness:
     try:
@@ -90,6 +91,7 @@ def _harness(
             model=model,
             temperature=temperature,
             base_url=base_url,
+            use_batch_api=use_batch_api,
         )
         sampler = build_sampler(sampler_name, scale=scale)
         scorer = build_scorer(scorer_name, config_path=scorer_config)
@@ -168,7 +170,7 @@ def explain(
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
     ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
-    sampler: Annotated[str, typer.Option(help="leave-one-out.")] = "leave-one-out",
+    sampler: Annotated[str, typer.Option(help="leave-one-out or random.")] = "leave-one-out",
     masker: Annotated[
         str,
         typer.Option(help="Masking strategy: placeholder, drop, or filler."),
@@ -188,6 +190,12 @@ def explain(
             help="Evaluations per coalition for distributional attribution at temperature > 0."
         ),
     ] = 1,
+    batch_api: Annotated[
+        bool,
+        typer.Option(
+            help="Use the provider native batch API (openai, anthropic) for cheaper async runs."
+        ),
+    ] = False,
     supplementary_rewrites: Annotated[
         int,
         typer.Option(
@@ -210,6 +218,7 @@ def explain(
         supplementary_rewrites=supplementary_rewrites,
         masker_name=masker,
         samples_per_coalition=samples_per_coalition,
+        use_batch_api=batch_api,
     ).explain(prompt_text, tools=_read_tools(tools))
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")
@@ -237,7 +246,7 @@ def optimize(
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
     ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
-    sampler: Annotated[str, typer.Option(help="leave-one-out.")] = "leave-one-out",
+    sampler: Annotated[str, typer.Option(help="leave-one-out or random.")] = "leave-one-out",
     scorer: Annotated[
         str,
         typer.Option(help="length, embedding, logprob, or tool-call."),
@@ -247,6 +256,12 @@ def optimize(
         typer.Option(help="Optional JSON scorer config path."),
     ] = None,
     scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
+    batch_api: Annotated[
+        bool,
+        typer.Option(
+            help="Use the provider native batch API (openai, anthropic) for cheaper async runs."
+        ),
+    ] = False,
 ) -> None:
     """Run attribution, then propose an attribution-informed prompt rewrite."""
     prompt_text = _read_prompt(prompt)
@@ -261,6 +276,7 @@ def optimize(
         scorer_name=scorer,
         scorer_config=scorer_config,
         supplementary_rewrites=0,
+        use_batch_api=batch_api,
         with_optimizer=True,
     ).optimize(prompt_text, tools=_read_tools(tools))
     if output:

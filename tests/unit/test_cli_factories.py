@@ -2,11 +2,16 @@ import json
 
 import pytest
 
-from promptlens.adapters import EchoAdapter, OpenAIAdapter, OpenAICompatibleAdapter
+from promptlens.adapters import (
+    AnthropicAdapter,
+    EchoAdapter,
+    OpenAIAdapter,
+    OpenAICompatibleAdapter,
+)
 from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
 from promptlens.core import CompletionOutput
 from promptlens.maskers import DropMasker, FillerMasker, PlaceholderMasker
-from promptlens.samplers import LeaveOneOutSampler
+from promptlens.samplers import LeaveOneOutSampler, RandomCoalitionSampler
 from promptlens.scorers import EmbeddingScorer, LengthDriftScorer, ToolAccuracyScorer
 
 
@@ -74,6 +79,48 @@ def test_build_sampler_converts_scale_to_repeats() -> None:
 
     assert isinstance(sampler, LeaveOneOutSampler)
     assert sampler.estimate_evaluations(2) == 6
+
+
+def test_build_sampler_supports_random() -> None:
+    sampler = build_sampler("random", scale="quick")
+
+    assert isinstance(sampler, RandomCoalitionSampler)
+    # quick scale (repeat 1) -> 50 coalitions; full (repeat 5) -> 250.
+    assert sampler.n_coalitions == 50
+    assert build_sampler("random-coalition", scale="full").n_coalitions == 250
+
+
+def test_build_sampler_rejects_unknown() -> None:
+    with pytest.raises(ValueError, match="Unsupported sampler"):
+        build_sampler("nope", scale="quick")
+
+
+def test_build_adapter_enables_batch_api() -> None:
+    openai = build_adapter(
+        "openai", "gpt-4o-mini", temperature=0.0, base_url=None, use_batch_api=True, client=object()
+    )
+    anthropic = build_adapter(
+        "anthropic",
+        "claude-3-5-haiku-latest",
+        temperature=0.0,
+        base_url=None,
+        use_batch_api=True,
+        client=object(),
+    )
+
+    assert isinstance(openai, OpenAIAdapter)
+    assert openai.use_batch_api is True
+    assert isinstance(anthropic, AnthropicAdapter)
+    assert anthropic.use_batch_api is True
+
+
+def test_build_adapter_batch_api_defaults_off() -> None:
+    adapter = build_adapter(
+        "openai", "gpt-4o-mini", temperature=0.0, base_url=None, client=object()
+    )
+
+    assert isinstance(adapter, OpenAIAdapter)
+    assert adapter.use_batch_api is False
 
 
 def test_build_scorer_creates_correct_scorer_types(tmp_path) -> None:

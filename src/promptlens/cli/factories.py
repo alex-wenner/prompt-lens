@@ -17,7 +17,7 @@ from promptlens.adapters import (
 )
 from promptlens.core import Adapter, Masker, Sampler, Scorer
 from promptlens.maskers import DropMasker, FillerMasker, PlaceholderMasker
-from promptlens.samplers import LeaveOneOutSampler
+from promptlens.samplers import LeaveOneOutSampler, RandomCoalitionSampler
 from promptlens.scorers import (
     EmbeddingScorer,
     LengthDriftScorer,
@@ -35,6 +35,9 @@ _DEFAULT_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
     ),
     "openai-compatible": ("local", ("OPENAI_COMPATIBLE_MODEL", "OPENAI_MODEL")),
 }
+
+# Base number of random coalitions at scale "quick"; larger scales multiply it.
+_BASE_RANDOM_COALITIONS = 50
 
 
 class _TextEmbeddingClient:
@@ -56,17 +59,33 @@ def build_adapter(
     *,
     temperature: float,
     base_url: str | None,
+    use_batch_api: bool = False,
     client: Any | None = None,
 ) -> Adapter:
-    """Build a provider adapter without exposing credentials."""
+    """Build a provider adapter without exposing credentials.
+
+    ``use_batch_api`` opts OpenAI and Anthropic adapters into their native batch
+    APIs (cheaper, asynchronous). It is ignored by providers without batch
+    support (echo, bedrock, openai-compatible).
+    """
     provider_key = provider.strip().lower()
     model_id = _resolve_model(provider_key, model)
     if provider_key == "echo":
         return EchoAdapter(model=model_id)
     if provider_key == "openai":
-        return OpenAIAdapter(model=model_id, temperature=temperature, client=client)
+        return OpenAIAdapter(
+            model=model_id,
+            temperature=temperature,
+            use_batch_api=use_batch_api,
+            client=client,
+        )
     if provider_key == "anthropic":
-        return AnthropicAdapter(model=model_id, temperature=temperature, client=client)
+        return AnthropicAdapter(
+            model=model_id,
+            temperature=temperature,
+            use_batch_api=use_batch_api,
+            client=client,
+        )
     if provider_key == "bedrock":
         return BedrockAdapter(model=model_id, temperature=temperature, client=client)
     if provider_key == "openai-compatible":
@@ -115,6 +134,12 @@ def build_sampler(name: str, *, scale: str | int) -> Sampler:
     sampler_key = name.strip().lower()
     if sampler_key in {"leave-one-out", "loo"}:
         return LeaveOneOutSampler(repeats=_repeats_from_scale(scale))
+    if sampler_key in {"random", "random-coalition"}:
+        # Reuse the perturbation scale as a coalition-count multiplier so larger
+        # scales buy more random coalitions, mirroring how it adds LOO repeats.
+        return RandomCoalitionSampler(
+            n_coalitions=_BASE_RANDOM_COALITIONS * _repeats_from_scale(scale)
+        )
     msg = f"Unsupported sampler: {name}"
     raise ValueError(msg)
 

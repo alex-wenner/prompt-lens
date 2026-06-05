@@ -6,7 +6,17 @@ from promptlens.core.base import CompletionOutput, Scorer
 
 
 class ToolAccuracyScorer(Scorer):
-    """Score whether a completion selected the expected tool and required arguments."""
+    """Score whether a completion selected the expected tool and required arguments.
+
+    This is an ``"objective"`` (task-quality) scorer, not a drift scorer: it
+    ignores the baseline and returns higher values when ``candidate`` picked the
+    expected tool with its required arguments. The harness converts this into an
+    attribution signal by measuring how much the objective drops when a feature
+    is masked, so a feature whose removal still yields the correct tool call
+    correctly receives *low* attribution.
+    """
+
+    orientation = "objective"
 
     def __init__(self, expected_tool: str, required_args: list[str] | None = None) -> None:
         self.expected_tool = expected_tool

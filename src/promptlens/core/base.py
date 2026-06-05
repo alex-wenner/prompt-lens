@@ -74,11 +74,35 @@ class Masker(ABC):
 
 
 class Scorer(ABC):
-    """Collapses model outputs into a scalar attribution signal."""
+    """Collapses model outputs into a scalar attribution signal.
+
+    Scorers come in two orientations, declared via the ``orientation`` class
+    attribute, because "a higher score" means opposite things for each:
+
+    * ``"drift"`` (default): higher means the candidate output moved *further*
+      from the baseline. The score is already an attribution signal, so the
+      harness uses it directly: masking an influential feature produces a large
+      drift.
+    * ``"objective"``: higher means the candidate did the desired thing *better*
+      (e.g. selected the expected tool). These scorers measure task quality and
+      typically ignore the baseline, so a raw value is **not** a drift signal.
+      The harness converts it to attribution by measuring how far the objective
+      *drops* when a feature is masked, relative to the baseline objective.
+
+    Keeping the two orientations distinct avoids the conceptual error of treating
+    "the masked prompt still did the right thing" as "this feature mattered a lot".
+    """
+
+    orientation: str = "drift"
 
     @abstractmethod
     def score(self, baseline: CompletionOutput, candidate: CompletionOutput) -> float:
-        """Return a scalar score. Larger means the masked output drifted more."""
+        """Return a scalar score.
+
+        For ``orientation == "drift"`` scorers, larger means the candidate output
+        drifted more from ``baseline``. For ``orientation == "objective"`` scorers,
+        larger means ``candidate`` better achieved the task objective.
+        """
 
 
 class Sampler(ABC):
