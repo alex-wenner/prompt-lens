@@ -12,6 +12,7 @@ from typing import Any
 from promptlens.adapters import (
     AnthropicAdapter,
     BedrockAdapter,
+    CopilotAdapter,
     EchoAdapter,
     OpenAIAdapter,
     OpenAICompatibleAdapter,
@@ -50,8 +51,9 @@ class _CompatPreset:
 
 
 # Generic providers reachable through the OpenAI-compatible adapter. They let
-# people point promptlens at xAI Grok, Google Gemini, GitHub Copilot, or any
-# other compatible gateway without a bespoke adapter.
+# people point promptlens at xAI Grok, Google Gemini, or any other compatible
+# gateway without a bespoke adapter. GitHub Copilot is handled separately via
+# its official SDK (see ``CopilotAdapter``).
 _COMPAT_PRESETS: dict[str, _CompatPreset] = {
     "grok": _CompatPreset(
         default_base_url="https://api.x.ai/v1",
@@ -67,16 +69,14 @@ _COMPAT_PRESETS: dict[str, _CompatPreset] = {
         default_model="gemini-3.5-flash",
         model_envs=("GEMINI_MODEL", "GOOGLE_MODEL"),
     ),
-    "copilot": _CompatPreset(
-        default_base_url="https://api.githubcopilot.com",
-        base_url_envs=("COPILOT_BASE_URL", "GITHUB_COPILOT_BASE_URL"),
-        api_key_envs=("GITHUB_COPILOT_TOKEN", "COPILOT_API_KEY", "GITHUB_TOKEN"),
-        default_model="gpt-5.4",
-        model_envs=("COPILOT_MODEL", "GITHUB_COPILOT_MODEL"),
-    ),
 }
 
-# Friendly aliases that resolve to a generic OpenAI-compatible preset.
+# Connection defaults for the GitHub Copilot SDK adapter.
+_COPILOT_DEFAULT_MODEL = "gpt-5.4"
+_COPILOT_MODEL_ENVS = ("COPILOT_MODEL", "GITHUB_COPILOT_MODEL")
+_COPILOT_TOKEN_ENVS = ("GITHUB_COPILOT_TOKEN", "COPILOT_API_KEY", "GITHUB_TOKEN")
+
+# Friendly aliases that resolve to a built-in provider key.
 _PROVIDER_ALIASES: dict[str, str] = {
     "xai": "grok",
     "google": "gemini",
@@ -118,6 +118,8 @@ def build_adapter(
     """
     provider_key = provider.strip().lower()
     provider_key = _PROVIDER_ALIASES.get(provider_key, provider_key)
+    if provider_key == "copilot":
+        return _build_copilot_adapter(model, temperature=temperature, client=client)
     if provider_key in _COMPAT_PRESETS:
         return _build_compat_preset_adapter(
             provider_key, model, temperature=temperature, base_url=base_url, client=client
@@ -167,6 +169,23 @@ def build_adapter(
         )
     msg = f"Unsupported provider: {provider}"
     raise ValueError(msg)
+
+
+def _build_copilot_adapter(
+    model: str | None,
+    *,
+    temperature: float,
+    client: Any | None,
+) -> Adapter:
+    """Build the GitHub Copilot adapter backed by the official Copilot SDK."""
+    model_id = model or _first_env(_COPILOT_MODEL_ENVS) or _COPILOT_DEFAULT_MODEL
+    github_token = _first_env(_COPILOT_TOKEN_ENVS)
+    return CopilotAdapter(
+        model=model_id,
+        temperature=temperature,
+        github_token=github_token,
+        client=client,
+    )
 
 
 def _build_compat_preset_adapter(

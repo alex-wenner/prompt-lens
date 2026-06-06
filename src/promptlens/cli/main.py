@@ -157,8 +157,8 @@ def explain(
         str,
         typer.Option(
             help=(
-                "Provider type: echo, openai, anthropic, bedrock, openai-compatible, "
-                "or a generic OpenAI-compatible provider (grok, gemini, copilot)."
+                "Provider type: echo, openai, anthropic, bedrock, copilot, "
+                "openai-compatible, or a generic OpenAI-compatible provider (grok, gemini)."
             )
         ),
     ] = "echo",
@@ -169,7 +169,7 @@ def explain(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL override for openai-compatible/grok/gemini/copilot providers."),
+        typer.Option(help="Base URL override for openai-compatible/grok/gemini providers."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
@@ -238,8 +238,8 @@ def optimize(
         str,
         typer.Option(
             help=(
-                "Provider type: echo, openai, anthropic, bedrock, openai-compatible, "
-                "or a generic OpenAI-compatible provider (grok, gemini, copilot)."
+                "Provider type: echo, openai, anthropic, bedrock, copilot, "
+                "openai-compatible, or a generic OpenAI-compatible provider (grok, gemini)."
             )
         ),
     ] = "echo",
@@ -250,7 +250,7 @@ def optimize(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL override for openai-compatible/grok/gemini/copilot providers."),
+        typer.Option(help="Base URL override for openai-compatible/grok/gemini providers."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")

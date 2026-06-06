@@ -4,6 +4,7 @@ import pytest
 
 from promptlens.adapters import (
     AnthropicAdapter,
+    CopilotAdapter,
     EchoAdapter,
     OpenAIAdapter,
     OpenAICompatibleAdapter,
@@ -40,14 +41,29 @@ def test_build_adapter_gemini_alias_and_overrides(monkeypatch: pytest.MonkeyPatc
     assert adapter.model == "gemini-3.1-pro"
 
 
-def test_build_adapter_copilot_preset(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_adapter_copilot_uses_sdk_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_COPILOT_TOKEN", "copilot-token")
+    client = object()
+
     adapter = build_adapter(
-        "copilot", "gpt-4.1", temperature=0.0, base_url=None, client=object()
+        "copilot", "gpt-4.1", temperature=0.0, base_url=None, client=client
     )
 
-    assert isinstance(adapter, OpenAICompatibleAdapter)
-    assert adapter.base_url == "https://api.githubcopilot.com"
+    assert isinstance(adapter, CopilotAdapter)
     assert adapter.model == "gpt-4.1"
+    assert adapter.github_token == "copilot-token"
+    assert adapter._client is client
+
+
+def test_build_adapter_copilot_alias_and_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("COPILOT_MODEL", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_MODEL", raising=False)
+    monkeypatch.setenv("COPILOT_MODEL", "gpt-5.4-mini")
+
+    adapter = build_adapter("github", None, temperature=0.0, base_url=None, client=object())
+
+    assert isinstance(adapter, CopilotAdapter)
+    assert adapter.model == "gpt-5.4-mini"
 
 
 def test_build_adapter_defaults_to_echo() -> None:

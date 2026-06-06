@@ -21,9 +21,17 @@ dependencies = [
 anthropic = ["anthropic>=0.39"]
 openai = ["openai>=1.54", "tiktoken>=0.7"]
 bedrock = ["boto3>=1.35"]
+copilot = ["github-copilot-sdk>=1.0"]
 shap = ["shap>=0.46"]
 dev = ["pytest>=8.2", "ruff>=0.6", "mypy>=1.11"]
-all = ["anthropic>=0.39", "openai>=1.54", "tiktoken>=0.7", "boto3>=1.35", "shap>=0.46"]
+all = [
+  "anthropic>=0.39",
+  "openai>=1.54",
+  "tiktoken>=0.7",
+  "boto3>=1.35",
+  "github-copilot-sdk>=1.0",
+  "shap>=0.46",
+]
 
 [project.scripts]
 promptlens = "promptlens.cli.main:app"
@@ -48,5 +56,5 @@ testpaths = ["tests"]
 markers = ["slow: requires live provider credentials"]
 
 [[tool.mypy.overrides]]
-module = ["anthropic", "boto3", "openai"]
+module = ["anthropic", "boto3", "openai", "copilot", "copilot.*"]
 ignore_missing_imports = true
