@@ -2,6 +2,8 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from promptlens.adapters import OpenAIAdapter
 
 
@@ -38,6 +40,19 @@ def test_tools_omitted_when_none() -> None:
     client = _FakeClient()
     OpenAIAdapter(model="gpt-4o", client=client).complete("hello")
     assert "tools" not in client.chat.completions.calls[0]
+
+
+def test_logprobs_rejected_for_unsupported_model() -> None:
+    client = _FakeClient()
+    with pytest.raises(ValueError, match="does not support logprobs"):
+        OpenAIAdapter(model="gpt-5.5", logprobs=True, client=client)
+
+
+def test_unsupported_model_allowed_without_logprobs() -> None:
+    client = _FakeClient()
+    adapter = OpenAIAdapter(model="gpt-5.5", client=client)
+    adapter.complete("hello")
+    assert "logprobs" not in client.chat.completions.calls[0]
 
 
 class _FakeFiles:

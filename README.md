@@ -1,6 +1,8 @@
 # promptlens
 
-`promptlens` is a black-box prompt attribution toolkit for LLM prompts. It helps you see which parts of a prompt, tool schema, or instruction stack move a model's output the most—because "the model just vibes" is not an observability strategy.
+`promptlens` is a **prompt observability** toolkit: black-box attribution that shows which parts of a prompt, tool schema, or instruction stack actually moved a model's output. Think of it as feature attribution for prompts and agent debugging — because "the model just vibes" is not an observability strategy.
+
+It is not a prompt optimizer first. It is an **attribution / observability** lens: segment a prompt, mask features, rerun the model, score how much the output changed, and rank what mattered. Prompt optimization is a downstream feature built on top of that evidence, not the headline.
 
 In traditional machine learning, understanding feature contribution is essential in the model lifecycle. In this new era, there is 100x more usage with 100x less visibility into WHY an LLM is doing what it's doing. So, this was my attempt at helping out. 
 
@@ -17,8 +19,11 @@ Provider surfaces are intentionally thin and optional:
 
 - Anthropic via the official `anthropic` SDK
 - OpenAI via the official `openai` SDK
+- GitHub Copilot via the official `github-copilot-sdk` (use the `copilot` provider; see the [GitHub Copilot guide](docs/github-copilot.md))
+- xAI Grok via the official `xai-sdk` (use the `grok` provider)
+- Google Gemini via the official `google-genai` SDK (use the `gemini` provider)
 - Amazon Bedrock via `boto3`
-- OpenAI-compatible endpoints for local, open-weight, or hosted open-source model deployments
+- Any other OpenAI-compatible endpoint via the generic adapter — local/open-weight servers (Ollama, vLLM) and hosted gateways (use `openai-compatible` with a `--base-url`)
 
 The core stays independent of any specific agent runtime, so integrations such as Strands Agents can be layered on top without coupling the attribution engine to a framework.
 
@@ -34,6 +39,9 @@ Optional provider extras are available when you need live model calls:
 pip install -e '.[openai]'
 pip install -e '.[anthropic]'
 pip install -e '.[bedrock]'
+pip install -e '.[copilot]'
+pip install -e '.[grok]'
+pip install -e '.[gemini]'
 pip install -e '.[all]'
 ```
 
@@ -80,6 +88,22 @@ promptlens optimize --prompt ./prompt.md --provider openai --model gpt-4o-mini
 ```
 
 The proposed rewrite is returned for review, never adopted automatically, and the result metadata carries a caveat that embedding/length scores can hide precision-critical changes — re-run attribution and task-level checks before shipping the edit. From the SDK, pass an `LLMPromptOptimizer` to `AttributionHarness(..., optimizer=...)` and call `harness.optimize(prompt)`.
+
+## Examples
+
+The [`examples/`](examples/) directory has three runnable, offline walkthroughs (no API keys required):
+
+- [`tool_routing_bug/`](examples/tool_routing_bug/) — find the tool-schema description that makes an agent call the wrong tool, then prove the fix with a before/after tool-accuracy metric.
+- [`system_prompt_cleanup/`](examples/system_prompt_cleanup/) — separate the load-bearing lines of a long system prompt from inert dead weight.
+- [`optimize_before_after/`](examples/optimize_before_after/) — turn attribution evidence into a concrete prompt rewrite.
+
+```bash
+python examples/tool_routing_bug/run.py
+```
+
+## Scorers: offline vs. semantic
+
+The CLI `embedding` scorer is provider-backed and semantic — select it with a scorer config naming a provider, e.g. `{"provider": "openai", "model": "text-embedding-3-small"}`. For fully offline smoke runs, the `embedding-local` scorer is a deterministic text-shape fallback; it is **not** semantic and should never be used for real attribution. See the [detailed guide](docs/detailed-guide.md) for the full scorer list and the drift-vs-objective distinction.
 
 ## Learn more
 

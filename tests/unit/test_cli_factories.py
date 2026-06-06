@@ -4,7 +4,10 @@ import pytest
 
 from promptlens.adapters import (
     AnthropicAdapter,
+    CopilotAdapter,
     EchoAdapter,
+    GeminiAdapter,
+    GrokAdapter,
     OpenAIAdapter,
     OpenAICompatibleAdapter,
 )
@@ -12,7 +15,64 @@ from promptlens.cli.factories import build_adapter, build_masker, build_sampler,
 from promptlens.core import CompletionOutput
 from promptlens.maskers import DropMasker, FillerMasker, PlaceholderMasker
 from promptlens.samplers import LeaveOneOutSampler, RandomCoalitionSampler
-from promptlens.scorers import EmbeddingScorer, LengthDriftScorer, ToolAccuracyScorer
+from promptlens.scorers import (
+    EmbeddingScorer,
+    LengthDriftScorer,
+    OpenAIEmbeddingClient,
+    ToolAccuracyScorer,
+)
+
+
+def test_build_adapter_grok_uses_sdk_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XAI_MODEL", raising=False)
+    monkeypatch.delenv("GROK_MODEL", raising=False)
+    monkeypatch.setenv("XAI_API_KEY", "secret-key")
+    client = object()
+
+    adapter = build_adapter("grok", None, temperature=0.0, base_url=None, client=client)
+
+    assert isinstance(adapter, GrokAdapter)
+    assert adapter.model == "grok-4"
+    assert adapter.api_key == "secret-key"
+    assert adapter._client is client
+
+
+def test_build_adapter_gemini_alias_and_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.1-pro")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    client = object()
+
+    adapter = build_adapter("google", None, temperature=0.3, base_url=None, client=client)
+
+    assert isinstance(adapter, GeminiAdapter)
+    assert adapter.model == "gemini-3.1-pro"
+    assert adapter.temperature == 0.3
+    assert adapter.api_key == "gemini-key"
+
+
+def test_build_adapter_copilot_uses_sdk_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_COPILOT_TOKEN", "copilot-token")
+    client = object()
+
+    adapter = build_adapter(
+        "copilot", "gpt-4.1", temperature=0.0, base_url=None, client=client
+    )
+
+    assert isinstance(adapter, CopilotAdapter)
+    assert adapter.model == "gpt-4.1"
+    assert adapter.github_token == "copilot-token"
+    assert adapter._client is client
+
+
+def test_build_adapter_copilot_alias_and_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("COPILOT_MODEL", raising=False)
+    monkeypatch.delenv("GITHUB_COPILOT_MODEL", raising=False)
+    monkeypatch.setenv("COPILOT_MODEL", "gpt-5.4-mini")
+
+    adapter = build_adapter("github", None, temperature=0.0, base_url=None, client=object())
+
+    assert isinstance(adapter, CopilotAdapter)
+    assert adapter.model == "gpt-5.4-mini"
 
 
 def test_build_adapter_defaults_to_echo() -> None:
@@ -131,7 +191,7 @@ def test_build_scorer_creates_correct_scorer_types(tmp_path) -> None:
     )
 
     length = build_scorer("length")
-    embedding = build_scorer("embedding")
+    embedding = build_scorer("embedding-local")
     tool_call = build_scorer("tool-call", config_path=str(tool_config))
 
     assert isinstance(length, LengthDriftScorer)
@@ -141,6 +201,41 @@ def test_build_scorer_creates_correct_scorer_types(tmp_path) -> None:
         CompletionOutput(text=""),
         CompletionOutput(text="", tool_calls=[{"name": "search", "arguments": {"query": "docs"}}]),
     ) == 1.0
+
+
+def test_build_scorer_embedding_requires_provider_config() -> None:
+    with pytest.raises(ValueError, match="embedding-local"):
+        build_scorer("embedding")
+
+
+def test_build_scorer_embedding_builds_openai_client(tmp_path) -> None:
+    config = tmp_path / "embedding.json"
+    config.write_text(
+        json.dumps({"provider": "openai", "model": "text-embedding-3-small"}),
+        encoding="utf-8",
+    )
+
+    scorer = build_scorer("embedding", config_path=str(config))
+
+    assert isinstance(scorer, EmbeddingScorer)
+    assert isinstance(scorer.embedding_client, OpenAIEmbeddingClient)
+    assert scorer.embedding_client.model == "text-embedding-3-small"
+
+
+def test_build_scorer_embedding_openai_compatible_requires_base_url(tmp_path) -> None:
+    config = tmp_path / "embedding.json"
+    config.write_text(json.dumps({"provider": "openai-compatible"}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="base_url"):
+        build_scorer("embedding", config_path=str(config))
+
+
+def test_build_scorer_rejects_unknown_embedding_provider(tmp_path) -> None:
+    config = tmp_path / "embedding.json"
+    config.write_text(json.dumps({"provider": "mystery"}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Unsupported embedding scorer provider"):
+        build_scorer("embedding", config_path=str(config))
 
 
 def test_tool_call_scorer_requires_config() -> None:

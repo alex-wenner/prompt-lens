@@ -4,41 +4,54 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
+from promptlens.core.tools import (
+    Tool,
+    ToolDefinitions,
+    ToolLike,
+    ToolParameter,
+    coerce_tools,
+    normalize_tool,
+    tool,
+)
+
 Coalition = tuple[bool, ...]
-ToolDefinitions = list[dict[str, Any]]
 
 
-@dataclass(frozen=True)
-class Feature:
+class Feature(BaseModel):
     """An attributable prompt or tool feature."""
+
+    model_config = ConfigDict(frozen=True)
 
     name: str
     text: str
     start: int | None = None
     end: int | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class CompletionOutput:
+class CompletionOutput(BaseModel):
     """Normalized model output returned by adapters."""
 
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
     text: str
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     logprobs: list[float] | None = None
     raw: Any | None = None
 
 
-@dataclass(frozen=True)
-class PromptMutation:
+class PromptMutation(BaseModel):
     """A supplementary prompt variant generated outside attribution scoring."""
+
+    model_config = ConfigDict(frozen=True)
 
     prompt: str
     feature: Feature | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class Adapter(ABC):
@@ -149,3 +162,26 @@ def normalize_coalition(coalition: Iterable[bool], n_features: int) -> Coalition
         msg = f"Expected coalition length {n_features}, got {len(normalized)}"
         raise ValueError(msg)
     return normalized
+
+
+__all__ = [
+    "Adapter",
+    "Coalition",
+    "CompletionOutput",
+    "Feature",
+    "Masker",
+    "PromptMutation",
+    "PromptMutator",
+    "PromptOptimizer",
+    "Sampler",
+    "Scorer",
+    "Segmenter",
+    "Tool",
+    "ToolDefinitions",
+    "ToolLike",
+    "ToolParameter",
+    "coerce_tools",
+    "normalize_coalition",
+    "normalize_tool",
+    "tool",
+]

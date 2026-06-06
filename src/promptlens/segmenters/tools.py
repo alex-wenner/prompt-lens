@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
-from promptlens.core.base import Feature, Segmenter, ToolDefinitions
+from promptlens.core.base import Feature, Segmenter, ToolDefinitions, ToolLike, normalize_tool
 
 Granularity = Literal["tool", "field", "parameter"]
 
@@ -21,8 +21,8 @@ class ToolSegmenter(Segmenter):
             features.extend(self._segment_tool(tool_index, tool))
         return features
 
-    def _segment_tool(self, tool_index: int, tool: dict[str, Any]) -> list[Feature]:
-        normalized = _normalize_tool(tool)
+    def _segment_tool(self, tool_index: int, tool: ToolLike) -> list[Feature]:
+        normalized = normalize_tool(tool)
         tool_name = str(normalized.get("name", f"tool_{tool_index + 1}"))
         if self.granularity == "tool":
             return [
@@ -63,16 +63,3 @@ class ToolSegmenter(Segmenter):
                 )
             )
         return features
-
-
-def _normalize_tool(tool: dict[str, Any]) -> dict[str, Any]:
-    if "function" in tool and isinstance(tool["function"], dict):
-        return dict(tool["function"])
-    input_schema = tool.get("input_schema")
-    if input_schema is not None:
-        return {
-            "name": tool.get("name"),
-            "description": tool.get("description", ""),
-            "parameters": input_schema,
-        }
-    return dict(tool)

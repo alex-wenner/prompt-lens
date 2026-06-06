@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict
 
 from promptlens.core.result import CostEstimate
 
-PRICING_UPDATED = "2026-06-01"
+PRICING_UPDATED = "2026-06-06"
 MODEL_PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
+    "anthropic/claude-opus-4-8": (5.00, 25.00),
     "anthropic/claude-sonnet-4-6": (3.00, 15.00),
-    "anthropic/claude-haiku-4-5": (0.80, 4.00),
+    "anthropic/claude-haiku-4-5": (1.00, 5.00),
+    "openai/gpt-5.5": (5.00, 30.00),
+    "openai/gpt-5.5-pro": (30.00, 180.00),
+    "openai/gpt-5.4": (2.50, 15.00),
+    "openai/gpt-5.4-mini": (0.75, 4.50),
+    "openai/gpt-5.4-nano": (0.20, 1.25),
+    "openai/gpt-5.4-pro": (30.00, 180.00),
+    "openai/gpt-5.3-codex": (1.75, 14.00),
     "openai/gpt-4o": (2.50, 10.00),
     "openai/gpt-4o-mini": (0.15, 0.60),
     "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0": (3.00, 15.00),
@@ -17,8 +25,9 @@ MODEL_PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 
 
-@dataclass(frozen=True)
-class TokenEstimate:
+class TokenEstimate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     input_tokens: int
     output_tokens: int
 

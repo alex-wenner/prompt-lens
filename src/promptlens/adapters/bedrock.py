@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
 
 
 class BedrockAdapter(Adapter):
@@ -30,7 +30,7 @@ class BedrockAdapter(Adapter):
             "inferenceConfig": {"temperature": self.temperature, "maxTokens": self.max_tokens},
         }
         if tools:
-            request["toolConfig"] = {"tools": tools}
+            request["toolConfig"] = {"tools": coerce_tools(tools, "bedrock")}
         response = client.converse(**request)
         output_message = response.get("output", {}).get("message", {})
         text_parts: list[str] = []

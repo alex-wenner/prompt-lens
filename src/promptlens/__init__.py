@@ -19,6 +19,12 @@ from promptlens.core import (
     Scorer,
     Segmenter,
     SupplementaryEvaluation,
+    Tool,
+    ToolDefinitions,
+    ToolLike,
+    ToolParameter,
+    coerce_tools,
+    tool,
 )
 
 __all__ = [
@@ -40,4 +46,10 @@ __all__ = [
     "Scorer",
     "Segmenter",
     "SupplementaryEvaluation",
+    "Tool",
+    "ToolDefinitions",
+    "ToolLike",
+    "ToolParameter",
+    "coerce_tools",
+    "tool",
 ]

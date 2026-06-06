@@ -11,6 +11,7 @@ import typer
 from promptlens import AttributionHarness, Segmenter
 from promptlens.adapters import EchoAdapter
 from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
+from promptlens.core.base import ToolDefinitions
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
 from promptlens.mutators import LLMRewriteMutator
 from promptlens.optimizers import LLMPromptOptimizer
@@ -34,14 +35,15 @@ def _read_prompt(prompt: str) -> str:
     return prompt
 
 
-def _read_tools(path: str | None) -> list[dict[str, object]] | None:
+def _read_tools(path: str | None) -> ToolDefinitions | None:
     if path is None:
         return None
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, list):
         msg = "Tools file must contain a JSON list"
         raise typer.BadParameter(msg)
-    return [dict(item) for item in data]
+    tools: ToolDefinitions = [dict(item) for item in data]
+    return tools
 
 
 def _segmenter(name: str) -> Segmenter:
@@ -155,7 +157,12 @@ def explain(
     output: Annotated[str | None, typer.Option(help="Optional JSON output path.")] = None,
     provider: Annotated[
         str,
-        typer.Option(help="Provider type: echo, openai, anthropic, bedrock, or openai-compatible."),
+        typer.Option(
+            help=(
+                "Provider type: echo, openai, anthropic, bedrock, copilot, grok, "
+                "gemini, or openai-compatible (with --base-url)."
+            )
+        ),
     ] = "echo",
     model: Annotated[
         str | None,
@@ -164,7 +171,7 @@ def explain(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL for openai-compatible providers."),
+        typer.Option(help="Base URL for the openai-compatible provider."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
@@ -177,7 +184,7 @@ def explain(
     ] = "placeholder",
     scorer: Annotated[
         str,
-        typer.Option(help="length, embedding, logprob, or tool-call."),
+        typer.Option(help="length, embedding, embedding-local, logprob, or tool-call."),
     ] = "length",
     scorer_config: Annotated[
         str | None,
@@ -231,7 +238,12 @@ def optimize(
     output: Annotated[str | None, typer.Option(help="Optional JSON output path.")] = None,
     provider: Annotated[
         str,
-        typer.Option(help="Provider type: echo, openai, anthropic, bedrock, or openai-compatible."),
+        typer.Option(
+            help=(
+                "Provider type: echo, openai, anthropic, bedrock, copilot, grok, "
+                "gemini, or openai-compatible (with --base-url)."
+            )
+        ),
     ] = "echo",
     model: Annotated[
         str | None,
@@ -240,7 +252,7 @@ def optimize(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL for openai-compatible providers."),
+        typer.Option(help="Base URL for the openai-compatible provider."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
@@ -249,7 +261,7 @@ def optimize(
     sampler: Annotated[str, typer.Option(help="leave-one-out or random.")] = "leave-one-out",
     scorer: Annotated[
         str,
-        typer.Option(help="length, embedding, logprob, or tool-call."),
+        typer.Option(help="length, embedding, embedding-local, logprob, or tool-call."),
     ] = "length",
     scorer_config: Annotated[
         str | None,

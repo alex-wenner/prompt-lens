@@ -6,7 +6,7 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
 
 
 class AnthropicAdapter(Adapter):
@@ -44,7 +44,7 @@ class AnthropicAdapter(Adapter):
             "messages": [{"role": "user", "content": prompt}],
         }
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = coerce_tools(tools, "anthropic")
         return kwargs
 
     def complete(self, prompt: str, tools: ToolDefinitions | None = None) -> CompletionOutput:

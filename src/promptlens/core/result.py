@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from rich.table import Table
 
@@ -14,9 +14,10 @@ from promptlens.core.base import Coalition, CompletionOutput, Feature
 _MAX_BAR_WIDTH = 20
 
 
-@dataclass(frozen=True)
-class CostEstimate:
+class CostEstimate(BaseModel):
     """Estimated spend before provider calls are made."""
+
+    model_config = ConfigDict(frozen=True)
 
     model: str
     features: int
@@ -26,14 +27,14 @@ class CostEstimate:
     input_cost_usd: float
     output_cost_usd: float
     pricing_updated: str
-    comparisons: dict[str, float] = field(default_factory=dict)
+    comparisons: dict[str, float] = Field(default_factory=dict)
 
     @property
     def total_usd(self) -> float:
         return self.input_cost_usd + self.output_cost_usd
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
+        data = self.model_dump()
         data["total_usd"] = self.total_usd
         return data
 
@@ -57,9 +58,10 @@ class CostEstimate:
         Console().print(table)
 
 
-@dataclass(frozen=True)
-class CoalitionEvaluation:
+class CoalitionEvaluation(BaseModel):
     """A single masked-prompt evaluation."""
+
+    model_config = ConfigDict(frozen=True)
 
     coalition: Coalition
     prompt: str
@@ -79,9 +81,10 @@ class CoalitionEvaluation:
         }
 
 
-@dataclass(frozen=True)
-class FeatureAttribution:
+class FeatureAttribution(BaseModel):
     """Attribution score for one feature."""
+
+    model_config = ConfigDict(frozen=True)
 
     feature: Feature
     value: float
@@ -89,27 +92,28 @@ class FeatureAttribution:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "feature": asdict(self.feature),
+            "feature": self.feature.model_dump(),
             "value": self.value,
             "stderr": self.stderr,
         }
 
 
-@dataclass(frozen=True)
-class SupplementaryEvaluation:
+class SupplementaryEvaluation(BaseModel):
     """A non-attribution prompt variant evaluation."""
+
+    model_config = ConfigDict(frozen=True)
 
     kind: str
     prompt: str
     output: CompletionOutput
     score: float
     feature: Feature | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "kind": self.kind,
-            "feature": asdict(self.feature) if self.feature else None,
+            "feature": self.feature.model_dump() if self.feature else None,
             "prompt": self.prompt,
             "output": {
                 "text": self.output.text,
@@ -121,15 +125,16 @@ class SupplementaryEvaluation:
         }
 
 
-@dataclass(frozen=True)
-class AttributionResult:
+class AttributionResult(BaseModel):
     """Rich attribution output for SDK and CLI consumers."""
+
+    model_config = ConfigDict(frozen=True)
 
     baseline_output: CompletionOutput
     attributions: list[FeatureAttribution]
     evaluations: list[CoalitionEvaluation]
     cost_estimate: CostEstimate | None = None
-    supplementary_evaluations: list[SupplementaryEvaluation] = field(default_factory=list)
+    supplementary_evaluations: list[SupplementaryEvaluation] = Field(default_factory=list)
 
     def ranked(self) -> list[tuple[FeatureAttribution, float]]:
         """Return attributions sorted by importance with each one's normalized share.
@@ -200,14 +205,15 @@ class AttributionResult:
             Console().print(supplementary_table)
 
 
-@dataclass(frozen=True)
-class OptimizationResult:
+class OptimizationResult(BaseModel):
     """An LLM-proposed prompt rewrite derived from attribution evidence."""
+
+    model_config = ConfigDict(frozen=True)
 
     original_prompt: str
     proposed_prompt: str
     rationale: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
