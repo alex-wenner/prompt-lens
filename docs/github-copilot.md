@@ -1,38 +1,53 @@
 # Using GitHub Copilot with promptlens
 
-GitHub Copilot exposes an OpenAI-compatible Chat Completions API, so `promptlens`
-talks to it through the generic `OpenAICompatibleAdapter`. On the CLI the
-`copilot` provider presets the right base URL, API-key environment variables, and
-default model, so you usually only need to export a token and pick a model.
+GitHub Copilot is driven through its official Python SDK
+([`github-copilot-sdk`](https://pypi.org/project/github-copilot-sdk/)), which
+talks to the bundled Copilot CLI runtime rather than a plain HTTP Chat
+Completions endpoint. `promptlens` wraps that asynchronous, session-based SDK
+behind the standard synchronous adapter interface as `CopilotAdapter`.
+
+This is different from the other OpenAI-compatible gateways (xAI Grok, Google
+Gemini), which still go through `OpenAICompatibleAdapter`.
+
+## Install
+
+Install the Copilot extra to pull in the SDK:
+
+```bash
+pip install -e '.[copilot]'
+```
+
+The SDK bundles the GitHub Copilot CLI automatically, but the CLI must be able to
+authenticate (see [Configuration](#configuration)).
 
 ## Provider names
 
-The following provider values all resolve to the same GitHub Copilot preset:
+The following provider values all resolve to the GitHub Copilot SDK adapter:
 
 - `copilot`
 - `github` (alias)
 - `github-copilot` (alias)
 
-You can also use `openai-compatible` with an explicit `--base-url` if you want to
-bypass the preset entirely.
-
 ## Configuration
 
-The `copilot` preset reads the following settings, in order of precedence
+The `copilot` provider reads the following settings, in order of precedence
 (explicit CLI flag, then environment variable, then built-in default):
 
-| Setting   | CLI flag    | Environment variables                                          | Default                          |
-| --------- | ----------- | -------------------------------------------------------------- | -------------------------------- |
-| Base URL  | `--base-url`| `COPILOT_BASE_URL`, `GITHUB_COPILOT_BASE_URL`                  | `https://api.githubcopilot.com`  |
-| API key   | —           | `GITHUB_COPILOT_TOKEN`, `COPILOT_API_KEY`, `GITHUB_TOKEN`       | —                                |
-| Model     | `--model`   | `COPILOT_MODEL`, `GITHUB_COPILOT_MODEL`                         | `gpt-5.4`                        |
+| Setting       | CLI flag  | Environment variables                                    | Default     |
+| ------------- | --------- | -------------------------------------------------------- | ----------- |
+| Model         | `--model` | `COPILOT_MODEL`, `GITHUB_COPILOT_MODEL`                  | `gpt-5.4`   |
+| GitHub token  | —         | `GITHUB_COPILOT_TOKEN`, `COPILOT_API_KEY`, `GITHUB_TOKEN` | CLI auth    |
 
-The first environment variable that is set in each row wins. There is no built-in
-default API key, so you must supply one via one of the listed variables.
+The first environment variable that is set in each row wins. When no token
+variable is set, the SDK falls back to the Copilot CLI's own logged-in user
+authentication.
+
+Because the Copilot SDK connects to the CLI runtime rather than an HTTP endpoint,
+`--base-url` does **not** apply to the `copilot` provider.
 
 ## Quick start
 
-Export a token and run an attribution sweep:
+Authenticate the Copilot CLI (or export a token) and run an attribution sweep:
 
 ```bash
 export GITHUB_COPILOT_TOKEN="<your-copilot-token>"
@@ -52,33 +67,19 @@ promptlens estimate \
   --model gpt-5.4
 ```
 
-Override the base URL for a proxy or enterprise gateway:
-
-```bash
-promptlens explain \
-  --prompt ./prompt.md \
-  --provider copilot \
-  --base-url https://your-gateway.example.com
-```
-
 ## SDK usage
 
-The same preset is available from Python by constructing the
-`OpenAICompatibleAdapter` directly:
+The adapter is available from Python as `CopilotAdapter`. Each `complete()` call
+runs in a fresh, stateless Copilot session so attribution coalitions never share
+conversation memory:
 
 ```python
-import os
-
 from promptlens import AttributionHarness
-from promptlens.adapters import OpenAICompatibleAdapter
+from promptlens.adapters import CopilotAdapter
 from promptlens.scorers import EmbeddingScorer
 from promptlens.segmenters import SentenceSegmenter
 
-adapter = OpenAICompatibleAdapter(
-    model="gpt-5.4",
-    base_url="https://api.githubcopilot.com",
-    api_key=os.environ["GITHUB_COPILOT_TOKEN"],
-)
+adapter = CopilotAdapter(model="gpt-5.4")
 
 harness = AttributionHarness(
     adapter=adapter,
@@ -88,16 +89,24 @@ harness = AttributionHarness(
 
 result = harness.explain("Always answer in JSON. Include a confidence score.")
 result.print()
+
+# The adapter owns a background Copilot runtime; release it when finished.
+adapter.close()
 ```
 
 ## Notes
 
-- Log probabilities are off by default because most compatibility layers,
-  including GitHub Copilot, do not return token log probabilities. Avoid the
-  `LogprobScorer` for this provider and prefer `EmbeddingScorer` or
-  `LengthDriftScorer`.
+- The Copilot CLI controls sampling, so `temperature` is accepted for interface
+  parity but is not forwarded to the runtime.
+- OpenAI-style tool schemas passed via `--tools` are not forwarded to the Copilot
+  session, because the SDK exposes a different custom-tool model. Tool *requests*
+  the assistant makes are still captured on the result, so tool-selection
+  attribution works for tools the model invokes on its own.
+- Log probabilities are not available, so avoid the `LogprobScorer` for this
+  provider and prefer `EmbeddingScorer` or `LengthDriftScorer`.
+- `CopilotAdapter` spawns a background Copilot CLI runtime. It is stopped
+  automatically at interpreter exit, but you can call `adapter.close()` to release
+  it eagerly.
 - Live calls send your prompt to GitHub Copilot. Handle sensitive data according
   to your own policies, as described in the
   [detailed guide](detailed-guide.md#cost-and-privacy-notes).
-- `promptlens` never stores or transmits your token; it is read from the
-  environment only to authenticate provider calls.
