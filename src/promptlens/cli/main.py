@@ -11,6 +11,7 @@ import typer
 from promptlens import AttributionHarness, Segmenter
 from promptlens.adapters import EchoAdapter
 from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
+from promptlens.core.base import ToolDefinitions
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
 from promptlens.mutators import LLMRewriteMutator
 from promptlens.optimizers import LLMPromptOptimizer
@@ -34,14 +35,15 @@ def _read_prompt(prompt: str) -> str:
     return prompt
 
 
-def _read_tools(path: str | None) -> list[dict[str, object]] | None:
+def _read_tools(path: str | None) -> ToolDefinitions | None:
     if path is None:
         return None
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, list):
         msg = "Tools file must contain a JSON list"
         raise typer.BadParameter(msg)
-    return [dict(item) for item in data]
+    tools: ToolDefinitions = [dict(item) for item in data]
+    return tools
 
 
 def _segmenter(name: str) -> Segmenter:

@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from promptlens.adapters import (
     AnthropicAdapter,
@@ -42,9 +43,12 @@ _DEFAULT_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
-@dataclass(frozen=True)
-class _SdkProvider:
+class _SdkProvider(BaseModel):
     """Connection defaults for a provider reached through its official SDK."""
+
+    model_config = ConfigDict(
+        frozen=True, arbitrary_types_allowed=True, protected_namespaces=()
+    )
 
     adapter: Callable[..., Adapter]
     default_model: str

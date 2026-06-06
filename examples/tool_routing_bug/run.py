@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from promptlens import AttributionHarness
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, tool
 from promptlens.scorers import ToolAccuracyScorer
 from promptlens.segmenters import SentenceSegmenter
 
@@ -50,39 +50,23 @@ _PROMPT_TEMPLATE = (
 GOOD_PROMPT = _PROMPT_TEMPLATE.format(description=GOOD_DESCRIPTION)
 MISLEADING_PROMPT = _PROMPT_TEMPLATE.format(description=MISLEADING_DESCRIPTION)
 
-# Real tool schemas so a live model can actually emit a tool call; the offline
+
+# Tools are declared once with the provider-neutral ``@tool`` decorator; the
+# active adapter coerces each ``Tool`` into its provider's schema. The offline
 # adapter ignores them and routes from the prompt text alone.
-TOOLS: ToolDefinitions = [
-    {
-        "type": "function",
-        "function": {
-            "name": "lookup_order",
-            "description": "Look up the status of an existing customer order.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "order_reference": {
-                        "type": "string",
-                        "description": "Identifier for the customer's existing purchase.",
-                    }
-                },
-                "required": ["order_reference"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_catalog",
-            "description": "Search the product catalog for items to buy.",
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string"}},
-                "required": ["query"],
-            },
-        },
-    },
-]
+@tool
+def lookup_order(
+    order_reference: Annotated[str, "Identifier for the customer's existing purchase."],
+) -> str:
+    """Look up the status of an existing customer order."""
+
+
+@tool
+def search_catalog(query: Annotated[str, "What the customer wants to buy."]) -> str:
+    """Search the product catalog for items to buy."""
+
+
+TOOLS: ToolDefinitions = [lookup_order, search_catalog]
 
 
 class SimulatedRoutingAgent(Adapter):

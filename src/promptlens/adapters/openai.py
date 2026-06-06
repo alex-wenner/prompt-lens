@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from promptlens.adapters.models import supports_logprobs
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
 
 _CHAT_COMPLETIONS_ENDPOINT = "/v1/chat/completions"
 
@@ -55,7 +55,7 @@ class OpenAIAdapter(Adapter):
             "temperature": self.temperature,
         }
         if tools:
-            body["tools"] = tools
+            body["tools"] = coerce_tools(tools, "openai")
         if self.logprobs:
             body["logprobs"] = True
         return body

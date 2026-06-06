@@ -203,7 +203,30 @@ promptlens explain \
 
 ### Work with tools
 
-Tool schemas can be provided as a JSON list with `--tools`. Use the `tools` segmenter when the tool schema itself is the feature set you care about:
+In the SDK, define tools once with the provider-neutral `Tool` model or the
+`@tool` decorator and let each adapter coerce them into its provider's schema
+(OpenAI `function` blocks, Anthropic `input_schema`, Bedrock `toolSpec`, Gemini
+`function_declarations`). Parameter descriptions are read from `Annotated`
+metadata:
+
+```python
+from typing import Annotated
+
+from promptlens import tool
+
+@tool
+def lookup_order(
+    order_reference: Annotated[str, "The customer's order ID."],
+) -> str:
+    """Look up the status of an existing customer order."""
+
+result = harness.explain("Pick the right tool.", tools=[lookup_order])
+```
+
+A raw provider-shaped `dict` is still accepted as an escape hatch and is
+forwarded to the provider unchanged. From the CLI, tool schemas are provided as
+a JSON list with `--tools`. Use the `tools` segmenter when the tool schema
+itself is the feature set you care about:
 
 ```bash
 promptlens explain \

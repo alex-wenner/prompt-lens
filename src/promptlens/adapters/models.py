@@ -17,14 +17,15 @@ model, so every Anthropic/Bedrock model is treated as not supporting logprobs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict
 
 CAPABILITIES_REVIEWED = "2026-06-06"
 
 
-@dataclass(frozen=True)
-class ModelInfo:
+class ModelInfo(BaseModel):
     """Static capability metadata for a known provider model."""
+
+    model_config = ConfigDict(frozen=True)
 
     name: str
     provider: str

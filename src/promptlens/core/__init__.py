@@ -21,6 +21,14 @@ from promptlens.core.result import (
     OptimizationResult,
     SupplementaryEvaluation,
 )
+from promptlens.core.tools import (
+    Tool,
+    ToolDefinitions,
+    ToolLike,
+    ToolParameter,
+    coerce_tools,
+    tool,
+)
 
 __all__ = [
     "Adapter",
@@ -42,6 +50,12 @@ __all__ = [
     "PromptMutator",
     "PromptOptimizer",
     "SupplementaryEvaluation",
+    "Tool",
+    "ToolDefinitions",
+    "ToolLike",
+    "ToolParameter",
+    "coerce_tools",
     "estimate_cost",
     "estimate_tokens",
+    "tool",
 ]

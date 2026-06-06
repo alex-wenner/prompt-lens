@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict
 
 from promptlens.core.result import CostEstimate
 
@@ -25,8 +25,9 @@ MODEL_PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 
 
-@dataclass(frozen=True)
-class TokenEstimate:
+class TokenEstimate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     input_tokens: int
     output_tokens: int
 

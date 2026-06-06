@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from promptlens.core.base import Feature, Segmenter, ToolDefinitions
 
@@ -69,5 +68,5 @@ class MarkdownSectionSegmenter(Segmenter):
         return features
 
 
-def _tools_feature(tools: list[dict[str, Any]]) -> Feature:
+def _tools_feature(tools: ToolDefinitions) -> Feature:
     return Feature(name="tools", text=str(tools), metadata={"kind": "tools", "tools": tools})

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
 
 
 class GeminiAdapter(Adapter):
@@ -37,7 +37,7 @@ class GeminiAdapter(Adapter):
         self._client = client
         config: dict[str, Any] = {"temperature": self.temperature}
         if tools:
-            config["tools"] = tools
+            config["tools"] = coerce_tools(tools, "gemini")
         response = client.models.generate_content(
             model=self.model, contents=prompt, config=config
         )

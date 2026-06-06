@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
 
 
 class GrokAdapter(Adapter):
@@ -38,7 +38,7 @@ class GrokAdapter(Adapter):
         self._client = client
         kwargs: dict[str, Any] = {"model": self.model, "temperature": self.temperature}
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = coerce_tools(tools, "grok")
         chat = client.chat.create(**kwargs)
         chat.append(_user_message(prompt))
         response = chat.sample()
