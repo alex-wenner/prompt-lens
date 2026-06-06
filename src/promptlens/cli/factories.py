@@ -26,6 +26,7 @@ from promptlens.scorers import (
     EmbeddingScorer,
     LengthDriftScorer,
     LogprobScorer,
+    OpenAIEmbeddingClient,
     ToolAccuracyScorer,
 )
 
@@ -88,7 +89,13 @@ _BASE_RANDOM_COALITIONS = 50
 
 
 class _TextEmbeddingClient:
-    """Deterministic local embedding fallback for CLI smoke runs."""
+    """Deterministic local embedding fallback for offline CLI smoke runs.
+
+    This is **not** a semantic embedding: it derives a few cheap text-shape
+    features without contacting a provider, so it is only useful for smoke tests
+    and demos. Select it explicitly via the ``embedding-local`` scorer name. For
+    real attribution use the ``embedding`` scorer with a provider config.
+    """
 
     def embed(self, text: str) -> Sequence[float]:
         """Return simple text-shape features without making provider calls."""
@@ -248,8 +255,14 @@ def build_scorer(name: str, *, config_path: str | None = None) -> Scorer:
     config = _load_config(config_path)
     if scorer_key == "length":
         return LengthDriftScorer()
-    if scorer_key == "embedding":
+    if scorer_key in {"embedding-local", "text-shape"}:
+        # Explicit opt-in to the deterministic text-shape fallback (offline only).
         return EmbeddingScorer(_TextEmbeddingClient())
+    if scorer_key == "embedding":
+        # Real semantic embeddings require a provider; the offline toy is opt-in
+        # under the embedding-local name so plain "embedding" is never mistaken
+        # for a semantic scorer.
+        return EmbeddingScorer(_build_embedding_client(config))
     if scorer_key == "logprob":
         return LogprobScorer()
     if scorer_key in {"tool-call", "tool-accuracy"}:
@@ -288,6 +301,45 @@ def _repeats_from_scale(scale: str | int) -> int:
         msg = f"Unsupported perturbation scale: {scale}"
         raise ValueError(msg)
     return repeats
+
+
+def _build_embedding_client(config: dict[str, Any]) -> Any:
+    """Build a provider-backed embedding client from scorer config.
+
+    The ``embedding`` scorer is semantic and therefore needs a provider. Config
+    must name a ``provider`` (``openai`` or ``openai-compatible``); for offline
+    smoke runs use the ``embedding-local`` scorer instead.
+    """
+    provider = config.get("provider")
+    if not isinstance(provider, str) or not provider.strip():
+        msg = (
+            "embedding scorer requires scorer config with a 'provider', e.g. "
+            '{"provider": "openai", "model": "text-embedding-3-small"}. '
+            "Use the 'embedding-local' scorer for an offline deterministic fallback."
+        )
+        raise ValueError(msg)
+    provider_key = provider.strip().lower()
+    model = config.get("model")
+    if model is not None and not isinstance(model, str):
+        msg = "embedding scorer 'model' must be a string"
+        raise ValueError(msg)
+    if provider_key == "openai":
+        return OpenAIEmbeddingClient(model=model or "text-embedding-3-small")
+    if provider_key == "openai-compatible":
+        base_url = (
+            config.get("base_url")
+            or os.environ.get("OPENAI_COMPATIBLE_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+        )
+        if not isinstance(base_url, str) or not base_url:
+            msg = (
+                "embedding scorer provider 'openai-compatible' requires a 'base_url' "
+                "in scorer config or the OPENAI_COMPATIBLE_BASE_URL environment variable"
+            )
+            raise ValueError(msg)
+        return OpenAIEmbeddingClient(model=model or "local", base_url=base_url)
+    msg = f"Unsupported embedding scorer provider: {provider}"
+    raise ValueError(msg)
 
 
 def _required_args_from_config(config: dict[str, Any]) -> list[str]:

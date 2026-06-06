@@ -1,10 +1,32 @@
 from promptlens.core import CompletionOutput
 from promptlens.scorers import (
     CompositeScorer,
+    EmbeddingScorer,
     LengthDriftScorer,
+    OpenAIEmbeddingClient,
     ToolAccuracyScorer,
     cosine_distance,
 )
+
+
+class _StubEmbeddings:
+    """Minimal stand-in for the OpenAI embeddings resource."""
+
+    def __init__(self, vectors: dict[str, list[float]]) -> None:
+        self.vectors = vectors
+        self.calls: list[tuple[str, str]] = []
+
+    def create(self, *, model: str, input: str):  # noqa: A002 - mirrors SDK kwarg
+        self.calls.append((model, input))
+        vector = self.vectors[input]
+        data = [type("Item", (), {"embedding": vector})()]
+        return type("Response", (), {"data": data})()
+
+
+class _StubClient:
+    def __init__(self, vectors: dict[str, list[float]]) -> None:
+        self.embeddings = _StubEmbeddings(vectors)
+
 
 
 def test_cosine_distance_identical_vectors_is_zero() -> None:
@@ -50,4 +72,26 @@ def test_composite_scorer_requires_components() -> None:
 
     with pytest.raises(ValueError, match="at least one"):
         CompositeScorer([])
+
+
+def test_openai_embedding_client_uses_injected_client() -> None:
+    client = _StubClient({"hello": [1.0, 0.0], "world": [0.0, 1.0]})
+    embed_client = OpenAIEmbeddingClient(model="text-embedding-3-small", client=client)
+
+    assert list(embed_client.embed("hello")) == [1.0, 0.0]
+    assert client.embeddings.calls == [("text-embedding-3-small", "hello")]
+
+
+def test_embedding_scorer_uses_provider_embeddings() -> None:
+    client = _StubClient({"baseline text": [1.0, 0.0], "drifted text": [0.0, 1.0]})
+    scorer = EmbeddingScorer(OpenAIEmbeddingClient(client=client))
+
+    distance = scorer.score(
+        CompletionOutput(text="baseline text"),
+        CompletionOutput(text="drifted text"),
+    )
+
+    # Orthogonal vectors -> cosine similarity 0 -> distance 1.0.
+    assert distance == 1.0
+
 
