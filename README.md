@@ -18,7 +18,7 @@ Provider surfaces are intentionally thin and optional:
 - Anthropic via the official `anthropic` SDK
 - OpenAI via the official `openai` SDK
 - Amazon Bedrock via `boto3`
-- Any OpenAI-compatible endpoint via the generic adapter — local/open-weight servers (Ollama, vLLM) and hosted gateways such as xAI Grok, Google Gemini, and GitHub Copilot (use the `grok`, `gemini`, or `copilot` providers, or `openai-compatible` with a `--base-url`)
+- Any OpenAI-compatible endpoint via the generic adapter — local/open-weight servers (Ollama, vLLM) and hosted gateways such as xAI Grok, Google Gemini, and GitHub Copilot (use the `grok`, `gemini`, or `copilot` providers, or `openai-compatible` with a `--base-url`). See the [GitHub Copilot guide](docs/github-copilot.md) for configuring the `copilot` provider.
 
 The core stays independent of any specific agent runtime, so integrations such as Strands Agents can be layered on top without coupling the attribution engine to a framework.
 

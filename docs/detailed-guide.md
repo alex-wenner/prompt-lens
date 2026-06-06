@@ -79,7 +79,7 @@ Available adapters include:
 - `OpenAIAdapter` for OpenAI chat completions.
 - `AnthropicAdapter` for Anthropic Messages API.
 - `BedrockAdapter` for Amazon Bedrock Runtime Converse API.
-- `OpenAICompatibleAdapter`, the generic adapter for any OpenAI-compatible endpoint — local servers (Ollama, vLLM) as well as hosted gateways such as xAI Grok, Google Gemini, and GitHub Copilot. On the CLI the `grok`, `gemini`, and `copilot` providers preset the right base URL and API-key environment variables; `openai-compatible` accepts an explicit `--base-url`.
+- `OpenAICompatibleAdapter`, the generic adapter for any OpenAI-compatible endpoint — local servers (Ollama, vLLM) as well as hosted gateways such as xAI Grok, Google Gemini, and GitHub Copilot. On the CLI the `grok`, `gemini`, and `copilot` providers preset the right base URL and API-key environment variables; `openai-compatible` accepts an explicit `--base-url`. See the [GitHub Copilot guide](github-copilot.md) for configuring the `copilot` provider.
 
 Only some models return token log probabilities. The OpenAI GPT-5 reasoning family (and the older `o`-series) do not accept the `logprobs` parameter, while the GPT-4o and GPT-4.1 families do; Anthropic's Messages API never exposes logprobs. `OpenAIAdapter` consults `promptlens.adapters.models.supports_logprobs` and raises a clear error if you request `logprobs=True` for a model that cannot return them, instead of surfacing an opaque provider 400.
 
