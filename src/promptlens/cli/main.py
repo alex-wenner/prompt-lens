@@ -177,7 +177,7 @@ def explain(
     ] = "placeholder",
     scorer: Annotated[
         str,
-        typer.Option(help="length, embedding, logprob, or tool-call."),
+        typer.Option(help="length, embedding, embedding-local, logprob, or tool-call."),
     ] = "length",
     scorer_config: Annotated[
         str | None,
@@ -249,7 +249,7 @@ def optimize(
     sampler: Annotated[str, typer.Option(help="leave-one-out or random.")] = "leave-one-out",
     scorer: Annotated[
         str,
-        typer.Option(help="length, embedding, logprob, or tool-call."),
+        typer.Option(help="length, embedding, embedding-local, logprob, or tool-call."),
     ] = "length",
     scorer_config: Annotated[
         str | None,
