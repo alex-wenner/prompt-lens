@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +28,60 @@ from promptlens.scorers import (
 
 _DEFAULT_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
     "echo": ("echo", ("PROMPTLENS_ECHO_MODEL",)),
-    "openai": ("gpt-4o-mini", ("OPENAI_MODEL",)),
-    "anthropic": ("claude-3-5-haiku-latest", ("ANTHROPIC_MODEL",)),
+    "openai": ("gpt-5.4-mini", ("OPENAI_MODEL",)),
+    "anthropic": ("claude-haiku-4-5", ("ANTHROPIC_MODEL",)),
     "bedrock": (
         "anthropic.claude-3-5-sonnet-20241022-v2:0",
         ("AWS_BEDROCK_MODEL_ID", "BEDROCK_MODEL_ID"),
     ),
     "openai-compatible": ("local", ("OPENAI_COMPATIBLE_MODEL", "OPENAI_MODEL")),
+}
+
+
+@dataclass(frozen=True)
+class _CompatPreset:
+    """Connection defaults for a generic OpenAI-compatible provider."""
+
+    default_base_url: str
+    base_url_envs: tuple[str, ...]
+    api_key_envs: tuple[str, ...]
+    default_model: str
+    model_envs: tuple[str, ...]
+
+
+# Generic providers reachable through the OpenAI-compatible adapter. They let
+# people point promptlens at xAI Grok, Google Gemini, GitHub Copilot, or any
+# other compatible gateway without a bespoke adapter.
+_COMPAT_PRESETS: dict[str, _CompatPreset] = {
+    "grok": _CompatPreset(
+        default_base_url="https://api.x.ai/v1",
+        base_url_envs=("XAI_BASE_URL", "GROK_BASE_URL"),
+        api_key_envs=("XAI_API_KEY", "GROK_API_KEY"),
+        default_model="grok-4",
+        model_envs=("XAI_MODEL", "GROK_MODEL"),
+    ),
+    "gemini": _CompatPreset(
+        default_base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        base_url_envs=("GEMINI_BASE_URL", "GOOGLE_BASE_URL"),
+        api_key_envs=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+        default_model="gemini-3.5-flash",
+        model_envs=("GEMINI_MODEL", "GOOGLE_MODEL"),
+    ),
+    "copilot": _CompatPreset(
+        default_base_url="https://api.githubcopilot.com",
+        base_url_envs=("COPILOT_BASE_URL", "GITHUB_COPILOT_BASE_URL"),
+        api_key_envs=("GITHUB_COPILOT_TOKEN", "COPILOT_API_KEY", "GITHUB_TOKEN"),
+        default_model="gpt-5.4",
+        model_envs=("COPILOT_MODEL", "GITHUB_COPILOT_MODEL"),
+    ),
+}
+
+# Friendly aliases that resolve to a generic OpenAI-compatible preset.
+_PROVIDER_ALIASES: dict[str, str] = {
+    "xai": "grok",
+    "google": "gemini",
+    "github": "copilot",
+    "github-copilot": "copilot",
 }
 
 # Base number of random coalitions at scale "quick"; larger scales multiply it.
@@ -69,6 +117,11 @@ def build_adapter(
     support (echo, bedrock, openai-compatible).
     """
     provider_key = provider.strip().lower()
+    provider_key = _PROVIDER_ALIASES.get(provider_key, provider_key)
+    if provider_key in _COMPAT_PRESETS:
+        return _build_compat_preset_adapter(
+            provider_key, model, temperature=temperature, base_url=base_url, client=client
+        )
     model_id = _resolve_model(provider_key, model)
     if provider_key == "echo":
         return EchoAdapter(model=model_id)
@@ -114,6 +167,38 @@ def build_adapter(
         )
     msg = f"Unsupported provider: {provider}"
     raise ValueError(msg)
+
+
+def _build_compat_preset_adapter(
+    provider_key: str,
+    model: str | None,
+    *,
+    temperature: float,
+    base_url: str | None,
+    client: Any | None,
+) -> Adapter:
+    """Build a generic OpenAI-compatible adapter (Grok, Gemini, Copilot, ...)."""
+    preset = _COMPAT_PRESETS[provider_key]
+    endpoint = base_url or _first_env(preset.base_url_envs) or preset.default_base_url
+    model_id = model or _first_env(preset.model_envs) or preset.default_model
+    api_key = _first_env(preset.api_key_envs)
+    kwargs: dict[str, Any] = {
+        "model": model_id,
+        "base_url": endpoint,
+        "temperature": temperature,
+        "client": client,
+    }
+    if api_key:
+        kwargs["api_key"] = api_key
+    return OpenAICompatibleAdapter(**kwargs)
+
+
+def _first_env(env_names: Sequence[str]) -> str | None:
+    for env_name in env_names:
+        value = os.environ.get(env_name)
+        if value:
+            return value
+    return None
 
 
 def build_masker(name: str) -> Masker:

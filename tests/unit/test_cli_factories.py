@@ -15,6 +15,41 @@ from promptlens.samplers import LeaveOneOutSampler, RandomCoalitionSampler
 from promptlens.scorers import EmbeddingScorer, LengthDriftScorer, ToolAccuracyScorer
 
 
+def test_build_adapter_grok_uses_preset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XAI_BASE_URL", raising=False)
+    monkeypatch.setenv("XAI_API_KEY", "secret-key")
+    client = object()
+
+    adapter = build_adapter("grok", None, temperature=0.0, base_url=None, client=client)
+
+    assert isinstance(adapter, OpenAICompatibleAdapter)
+    assert adapter.base_url == "https://api.x.ai/v1"
+    assert adapter.model == "grok-4"
+
+
+def test_build_adapter_gemini_alias_and_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.1-pro")
+    client = object()
+
+    adapter = build_adapter(
+        "google", None, temperature=0.0, base_url="http://localhost:9/v1", client=client
+    )
+
+    assert isinstance(adapter, OpenAICompatibleAdapter)
+    assert adapter.base_url == "http://localhost:9/v1"
+    assert adapter.model == "gemini-3.1-pro"
+
+
+def test_build_adapter_copilot_preset(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = build_adapter(
+        "copilot", "gpt-4.1", temperature=0.0, base_url=None, client=object()
+    )
+
+    assert isinstance(adapter, OpenAICompatibleAdapter)
+    assert adapter.base_url == "https://api.githubcopilot.com"
+    assert adapter.model == "gpt-4.1"
+
+
 def test_build_adapter_defaults_to_echo() -> None:
     adapter = build_adapter("echo", None, temperature=0.0, base_url=None)
 

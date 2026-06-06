@@ -79,7 +79,9 @@ Available adapters include:
 - `OpenAIAdapter` for OpenAI chat completions.
 - `AnthropicAdapter` for Anthropic Messages API.
 - `BedrockAdapter` for Amazon Bedrock Runtime Converse API.
-- `OpenAICompatibleAdapter` for local or hosted OpenAI-compatible endpoints.
+- `OpenAICompatibleAdapter`, the generic adapter for any OpenAI-compatible endpoint — local servers (Ollama, vLLM) as well as hosted gateways such as xAI Grok, Google Gemini, and GitHub Copilot. On the CLI the `grok`, `gemini`, and `copilot` providers preset the right base URL and API-key environment variables; `openai-compatible` accepts an explicit `--base-url`.
+
+Only some models return token log probabilities. The OpenAI GPT-5 reasoning family (and the older `o`-series) do not accept the `logprobs` parameter, while the GPT-4o and GPT-4.1 families do; Anthropic's Messages API never exposes logprobs. `OpenAIAdapter` consults `promptlens.adapters.models.supports_logprobs` and raises a clear error if you request `logprobs=True` for a model that cannot return them, instead of surfacing an opaque provider 400.
 
 Provider adapters are intentionally thin. They should make it easy to swap providers while keeping the attribution logic stable.
 
@@ -118,7 +120,7 @@ Scorers convert output differences into numeric signals.
 
 - `LengthDriftScorer` is useful for offline smoke tests because it does not need external services.
 - `EmbeddingScorer` measures semantic drift with an embedding client.
-- `LogprobScorer` compares average token log probabilities when the adapter provides them.
+- `LogprobScorer` compares average token log probabilities when the adapter provides them. Use it only with models that return logprobs (e.g. OpenAI `gpt-4o`/`gpt-4.1`); GPT-5 reasoning models and Anthropic models do not expose them.
 - `ToolAccuracyScorer` checks whether a completion selected an expected tool and required arguments.
 - `CompositeScorer` combines several scorers as a weighted sum, e.g. `0.7` embedding drift plus `0.3` length drift, when "what changed" is best captured by more than one signal.
 

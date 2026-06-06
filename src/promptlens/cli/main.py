@@ -155,7 +155,12 @@ def explain(
     output: Annotated[str | None, typer.Option(help="Optional JSON output path.")] = None,
     provider: Annotated[
         str,
-        typer.Option(help="Provider type: echo, openai, anthropic, bedrock, or openai-compatible."),
+        typer.Option(
+            help=(
+                "Provider type: echo, openai, anthropic, bedrock, openai-compatible, "
+                "or a generic OpenAI-compatible provider (grok, gemini, copilot)."
+            )
+        ),
     ] = "echo",
     model: Annotated[
         str | None,
@@ -164,7 +169,7 @@ def explain(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL for openai-compatible providers."),
+        typer.Option(help="Base URL override for openai-compatible/grok/gemini/copilot providers."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
@@ -231,7 +236,12 @@ def optimize(
     output: Annotated[str | None, typer.Option(help="Optional JSON output path.")] = None,
     provider: Annotated[
         str,
-        typer.Option(help="Provider type: echo, openai, anthropic, bedrock, or openai-compatible."),
+        typer.Option(
+            help=(
+                "Provider type: echo, openai, anthropic, bedrock, openai-compatible, "
+                "or a generic OpenAI-compatible provider (grok, gemini, copilot)."
+            )
+        ),
     ] = "echo",
     model: Annotated[
         str | None,
@@ -240,7 +250,7 @@ def optimize(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL for openai-compatible providers."),
+        typer.Option(help="Base URL override for openai-compatible/grok/gemini/copilot providers."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="sentences, paragraphs, sections, or tools.")
