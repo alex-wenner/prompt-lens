@@ -16,12 +16,18 @@ metric proves the fix.
 python examples/tool_routing_bug/run.py
 ```
 
-No API keys required — it uses a small deterministic simulated adapter.
+By default this calls a **real provider** with real tool schemas. Set
+`OPENAI_API_KEY` (or `ANTHROPIC_API_KEY` plus
+`PROMPTLENS_EXAMPLE_PROVIDER=anthropic`) to choose the model;
+`PROMPTLENS_EXAMPLE_MODEL` overrides the default model. With no credential set it
+falls back to a small deterministic simulated adapter, so it still runs offline
+and as a CI smoke test.
 
 ## What you should see
 
-Attribution over the healthy prompt ranks the order-id sentence at the top
-because masking it is the only change that collapses tool accuracy:
+With the offline fallback, attribution over the healthy prompt ranks the
+order-id sentence at the top because masking it is the only change that collapses
+tool accuracy (a real model will vary, but should still surface that sentence):
 
 | Feature      | Share  | Meaning                                         |
 | ------------ | ------ | ----------------------------------------------- |

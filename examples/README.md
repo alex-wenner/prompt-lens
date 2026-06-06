@@ -1,9 +1,10 @@
 # promptlens examples
 
 Three self-contained walkthroughs of the core promptlens workflow: **observe
-which parts of a prompt move the model, then act on it.** Each runs entirely
-offline with a small deterministic simulated adapter, so they need no API keys
-and double as smoke tests in CI.
+which parts of a prompt move the model, then act on it.** By default each runs
+against a **real provider**, and falls back to a small deterministic simulated
+adapter when no API key is set — so they need no credentials to try, and double
+as smoke tests in CI.
 
 | Example | Question it answers | Scorer |
 | ------- | ------------------- | ------ |
@@ -19,14 +20,37 @@ python examples/system_prompt_cleanup/run.py
 python examples/optimize_before_after/run.py
 ```
 
-Each script exposes a `main()` that returns its headline numbers, so the test
-suite can assert the expected behavior (see `tests/unit/test_examples.py`).
+Each script exposes a `main(adapter=...)` that returns its headline numbers, so
+the test suite can pin the offline-fallback behavior (see
+`tests/unit/test_examples.py`).
 
-## From simulation to real models
+## Choosing a provider
 
-The simulated adapters keep the examples deterministic and offline. To run the
-same workflow against a live model, swap in a provider adapter and (for the
-text-drift examples) a real semantic scorer:
+The examples call a real model whenever a credential is available, selected via
+environment variables (see [`_realprovider.py`](_realprovider.py)):
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `PROMPTLENS_EXAMPLE_PROVIDER` | `openai` or `anthropic` | `openai` |
+| `PROMPTLENS_EXAMPLE_MODEL` | Model id override | provider default |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Credential that enables the real call | — |
+
+```bash
+export OPENAI_API_KEY=sk-...
+python examples/tool_routing_bug/run.py            # real OpenAI model
+
+PROMPTLENS_EXAMPLE_PROVIDER=anthropic \
+  ANTHROPIC_API_KEY=... python examples/tool_routing_bug/run.py
+```
+
+With no credential set the examples print a notice and use the offline simulated
+adapter so they still run end-to-end.
+
+## Semantic scoring
+
+The text-drift examples score output-length drift, which works with any adapter.
+To run the same workflow with a real semantic scorer, use the CLI with the
+provider-backed `embedding` scorer:
 
 ```bash
 promptlens explain \

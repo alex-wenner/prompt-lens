@@ -5,15 +5,15 @@ which lines still matter. promptlens segments it into sentences, masks each one,
 and scores how much the model output drifts — so the inert "dead weight" lines
 fall to ~0% while the lines that actually shape the output rise to the top.
 
-This runs entirely offline with a deterministic simulated adapter whose output
-depends only on two instructions:
+By default this runs against a **real provider** (set ``OPENAI_API_KEY`` or
+``ANTHROPIC_API_KEY``; see ``examples/_realprovider.py`` for the env vars). When
+no credential is available it falls back to a deterministic offline adapter whose
+output shape depends only on two instructions:
 
 * "Always respond in valid JSON." controls the output envelope.
 * "Include a confidence score…" appends a confidence field.
 
-Every other line is polite boilerplate that does not change the simulated
-output, so it should attract almost no attribution. Swap in a real provider
-adapter and a semantic scorer to run the same workflow against a live model.
+so the example still runs end-to-end and doubles as a CI smoke test.
 
 Attribution is a lens, not an oracle: low attribution means "no measured effect
 under this scorer", not "safe to delete". Confirm before trimming a prompt.
@@ -21,12 +21,17 @@ under this scorer", not "safe to delete". Confirm before trimming a prompt.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any
 
 from promptlens import AttributionHarness
 from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
 from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import SentenceSegmenter
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _realprovider import select_adapter  # noqa: E402
 
 JSON_SIGNAL = "valid json"
 CONFIDENCE_SIGNAL = "confidence score"
@@ -42,7 +47,7 @@ SYSTEM_PROMPT = (
 
 
 class SimulatedFormatter(Adapter):
-    """Produce output whose shape depends only on the two load-bearing lines."""
+    """Offline fallback: output whose shape depends only on the two load-bearing lines."""
 
     def __init__(self) -> None:
         self.model = "simulated-formatter"
@@ -60,10 +65,11 @@ class SimulatedFormatter(Adapter):
         return CompletionOutput(text=text)
 
 
-def main() -> dict[str, Any]:
+def main(adapter: Adapter | None = None) -> dict[str, Any]:
     """Run the demo and return the per-feature shares for inspection and tests."""
+    adapter = adapter if adapter is not None else select_adapter(SimulatedFormatter())
     harness = AttributionHarness(
-        adapter=SimulatedFormatter(),
+        adapter=adapter,
         segmenter=SentenceSegmenter(),
         scorer=LengthDriftScorer(),
     )

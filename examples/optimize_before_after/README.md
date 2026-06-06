@@ -13,11 +13,17 @@ for review. The rewrite is **never** adopted automatically.
 python examples/optimize_before_after/run.py
 ```
 
-No API keys required — it uses a deterministic simulated adapter that echoes
-during the attribution sweep and returns a scripted rewrite when it receives the
-optimizer's brief.
+By default this calls a **real provider** — the same model answers the
+attribution sweep and proposes the rewrite. Set `OPENAI_API_KEY` (or
+`ANTHROPIC_API_KEY` plus `PROMPTLENS_EXAMPLE_PROVIDER=anthropic`) to choose the
+model; `PROMPTLENS_EXAMPLE_MODEL` overrides the default model. With no credential
+set it falls back to a deterministic simulated adapter that echoes during the
+attribution sweep and returns a scripted rewrite, so it still runs offline and as
+a CI smoke test.
 
 ## What you should see
+
+With the offline fallback (a real model proposes its own rewrite):
 
 | Field           | Value                                                            |
 | --------------- | ---------------------------------------------------------------- |
@@ -25,7 +31,7 @@ optimizer's brief.
 | proposed prompt | "Summarize the input text in exactly three bullet points."        |
 | rationale       | Kept the load-bearing three-bullet constraint; pruned filler.    |
 
-## Running it against a real model
+## Running it from the CLI
 
 ```bash
 promptlens optimize \

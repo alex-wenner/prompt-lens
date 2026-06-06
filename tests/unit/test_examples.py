@@ -1,8 +1,9 @@
 """Smoke tests that keep the examples runnable in CI.
 
-Each example exposes a ``main()`` that runs offline with a deterministic
-simulated adapter and returns its headline numbers, so we assert the documented
-behavior here rather than just importing the modules.
+Each example exposes a ``main(adapter=...)`` that returns its headline numbers.
+The examples default to a real provider, so these tests pass each example's
+deterministic offline adapter explicitly to assert the documented behavior
+without network access or provider credentials.
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ def _load_example(name: str) -> ModuleType:
 
 
 def test_tool_routing_bug_example() -> None:
-    result = _load_example("tool_routing_bug").main()
+    module = _load_example("tool_routing_bug")
+    result = module.main(adapter=module.SimulatedRoutingAgent())
 
     assert result["top_feature"] == "sentence_3"
     assert "order ID" in result["top_feature_text"]
@@ -33,7 +35,8 @@ def test_tool_routing_bug_example() -> None:
 
 
 def test_system_prompt_cleanup_example() -> None:
-    result = _load_example("system_prompt_cleanup").main()
+    module = _load_example("system_prompt_cleanup")
+    result = module.main(adapter=module.SimulatedFormatter())
 
     load_bearing = result["load_bearing"]
     assert any("valid JSON" in text for text in load_bearing)
@@ -43,7 +46,8 @@ def test_system_prompt_cleanup_example() -> None:
 
 
 def test_optimize_before_after_example() -> None:
-    result = _load_example("optimize_before_after").main()
+    module = _load_example("optimize_before_after")
+    result = module.main(adapter=module.ScriptedOptimizerAdapter())
 
     assert result["proposed_prompt"] == "Summarize the input text in exactly three bullet points."
     assert result["proposed_prompt"] != result["original_prompt"]

@@ -13,10 +13,16 @@ the two lines that actually shape the output rise to the top.
 python examples/system_prompt_cleanup/run.py
 ```
 
-No API keys required — it uses a small deterministic simulated adapter whose
-output is shaped only by the "valid JSON" and "confidence score" instructions.
+By default this calls a **real provider**. Set `OPENAI_API_KEY` (or
+`ANTHROPIC_API_KEY` plus `PROMPTLENS_EXAMPLE_PROVIDER=anthropic`) to choose the
+model; `PROMPTLENS_EXAMPLE_MODEL` overrides the default model. With no credential
+set it falls back to a small deterministic simulated adapter whose output is
+shaped only by the "valid JSON" and "confidence score" instructions, so it still
+runs offline and as a CI smoke test.
 
 ## What you should see
+
+With the offline fallback (a real model will vary):
 
 | Feature      | Share | Line                                           |
 | ------------ | ----- | ---------------------------------------------- |
@@ -27,10 +33,11 @@ output is shaped only by the "valid JSON" and "confidence score" instructions.
 The two formatting instructions carry all of the measured drift; the friendly
 boilerplate carries none.
 
-## Running it against a real model
+## Using a semantic scorer
 
-Swap the simulated adapter for a provider adapter and use a semantic scorer so
-"drift" reflects meaning, not just length:
+The script scores output-length drift, which any adapter supports. For semantic
+drift that reflects meaning rather than length, run the same prompt through the
+CLI with the provider-backed `embedding` scorer:
 
 ```bash
 promptlens explain \
