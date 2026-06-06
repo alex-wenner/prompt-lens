@@ -35,7 +35,8 @@ def select_adapter(offline: Adapter, *, temperature: float = 0.0) -> Adapter:
     provider credential is available so the demo (and the CI smoke test) keeps
     working without network access.
     """
-    provider = os.environ.get("PROMPTLENS_EXAMPLE_PROVIDER", _DEFAULT_PROVIDER).strip().lower()
+    raw_provider = os.environ.get("PROMPTLENS_EXAMPLE_PROVIDER", "").strip().lower()
+    provider = raw_provider or _DEFAULT_PROVIDER
     model = os.environ.get("PROMPTLENS_EXAMPLE_MODEL") or None
     key_env = _PROVIDER_KEY_ENV.get(provider)
     if key_env is None:
