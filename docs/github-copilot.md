@@ -6,8 +6,9 @@ talks to the bundled Copilot CLI runtime rather than a plain HTTP Chat
 Completions endpoint. `promptlens` wraps that asynchronous, session-based SDK
 behind the standard synchronous adapter interface as `CopilotAdapter`.
 
-This is different from the other OpenAI-compatible gateways (xAI Grok, Google
-Gemini), which still go through `OpenAICompatibleAdapter`.
+Like the other branded providers (xAI Grok via `xai-sdk`, Google Gemini via
+`google-genai`), Copilot has its own official SDK adapter rather than going
+through `OpenAICompatibleAdapter`.
 
 ## Install
 

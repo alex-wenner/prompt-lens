@@ -22,6 +22,8 @@ anthropic = ["anthropic>=0.39"]
 openai = ["openai>=1.54", "tiktoken>=0.7"]
 bedrock = ["boto3>=1.35"]
 copilot = ["github-copilot-sdk>=1.0"]
+grok = ["xai-sdk>=1.0"]
+gemini = ["google-genai>=1.0"]
 shap = ["shap>=0.46"]
 dev = ["pytest>=8.2", "ruff>=0.6", "mypy>=1.11"]
 all = [
@@ -30,6 +32,8 @@ all = [
   "tiktoken>=0.7",
   "boto3>=1.35",
   "github-copilot-sdk>=1.0",
+  "xai-sdk>=1.0",
+  "google-genai>=1.0",
   "shap>=0.46",
 ]
 
@@ -56,5 +60,5 @@ testpaths = ["tests"]
 markers = ["slow: requires live provider credentials"]
 
 [[tool.mypy.overrides]]
-module = ["anthropic", "boto3", "openai", "copilot", "copilot.*"]
+module = ["anthropic", "boto3", "openai", "copilot", "copilot.*", "xai_sdk", "xai_sdk.*", "google", "google.genai", "google.genai.*"]
 ignore_missing_imports = true

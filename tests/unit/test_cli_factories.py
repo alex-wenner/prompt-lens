@@ -6,6 +6,8 @@ from promptlens.adapters import (
     AnthropicAdapter,
     CopilotAdapter,
     EchoAdapter,
+    GeminiAdapter,
+    GrokAdapter,
     OpenAIAdapter,
     OpenAICompatibleAdapter,
 )
@@ -16,29 +18,31 @@ from promptlens.samplers import LeaveOneOutSampler, RandomCoalitionSampler
 from promptlens.scorers import EmbeddingScorer, LengthDriftScorer, ToolAccuracyScorer
 
 
-def test_build_adapter_grok_uses_preset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("XAI_BASE_URL", raising=False)
+def test_build_adapter_grok_uses_sdk_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XAI_MODEL", raising=False)
+    monkeypatch.delenv("GROK_MODEL", raising=False)
     monkeypatch.setenv("XAI_API_KEY", "secret-key")
     client = object()
 
     adapter = build_adapter("grok", None, temperature=0.0, base_url=None, client=client)
 
-    assert isinstance(adapter, OpenAICompatibleAdapter)
-    assert adapter.base_url == "https://api.x.ai/v1"
+    assert isinstance(adapter, GrokAdapter)
     assert adapter.model == "grok-4"
+    assert adapter.api_key == "secret-key"
+    assert adapter._client is client
 
 
 def test_build_adapter_gemini_alias_and_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GEMINI_MODEL", "gemini-3.1-pro")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
     client = object()
 
-    adapter = build_adapter(
-        "google", None, temperature=0.0, base_url="http://localhost:9/v1", client=client
-    )
+    adapter = build_adapter("google", None, temperature=0.3, base_url=None, client=client)
 
-    assert isinstance(adapter, OpenAICompatibleAdapter)
-    assert adapter.base_url == "http://localhost:9/v1"
+    assert isinstance(adapter, GeminiAdapter)
     assert adapter.model == "gemini-3.1-pro"
+    assert adapter.temperature == 0.3
+    assert adapter.api_key == "gemini-key"
 
 
 def test_build_adapter_copilot_uses_sdk_adapter(monkeypatch: pytest.MonkeyPatch) -> None:

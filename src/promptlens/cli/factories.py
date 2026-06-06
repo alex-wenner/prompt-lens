@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,6 +14,8 @@ from promptlens.adapters import (
     BedrockAdapter,
     CopilotAdapter,
     EchoAdapter,
+    GeminiAdapter,
+    GrokAdapter,
     OpenAIAdapter,
     OpenAICompatibleAdapter,
 )
@@ -40,34 +42,31 @@ _DEFAULT_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 
 @dataclass(frozen=True)
-class _CompatPreset:
-    """Connection defaults for a generic OpenAI-compatible provider."""
+class _SdkProvider:
+    """Connection defaults for a provider reached through its official SDK."""
 
-    default_base_url: str
-    base_url_envs: tuple[str, ...]
-    api_key_envs: tuple[str, ...]
+    adapter: Callable[..., Adapter]
     default_model: str
     model_envs: tuple[str, ...]
+    api_key_envs: tuple[str, ...]
 
 
-# Generic providers reachable through the OpenAI-compatible adapter. They let
-# people point promptlens at xAI Grok, Google Gemini, or any other compatible
-# gateway without a bespoke adapter. GitHub Copilot is handled separately via
-# its official SDK (see ``CopilotAdapter``).
-_COMPAT_PRESETS: dict[str, _CompatPreset] = {
-    "grok": _CompatPreset(
-        default_base_url="https://api.x.ai/v1",
-        base_url_envs=("XAI_BASE_URL", "GROK_BASE_URL"),
-        api_key_envs=("XAI_API_KEY", "GROK_API_KEY"),
+# Branded providers that each ship a dedicated, official SDK adapter (matching
+# OpenAI and Anthropic) rather than going through the generic OpenAI-compatible
+# HTTP path. GitHub Copilot is handled separately because its SDK takes a token
+# rather than an API key (see ``_build_copilot_adapter``).
+_SDK_PROVIDERS: dict[str, _SdkProvider] = {
+    "grok": _SdkProvider(
+        adapter=GrokAdapter,
         default_model="grok-4",
         model_envs=("XAI_MODEL", "GROK_MODEL"),
+        api_key_envs=("XAI_API_KEY", "GROK_API_KEY"),
     ),
-    "gemini": _CompatPreset(
-        default_base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        base_url_envs=("GEMINI_BASE_URL", "GOOGLE_BASE_URL"),
-        api_key_envs=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "gemini": _SdkProvider(
+        adapter=GeminiAdapter,
         default_model="gemini-3.5-flash",
         model_envs=("GEMINI_MODEL", "GOOGLE_MODEL"),
+        api_key_envs=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     ),
 }
 
@@ -114,15 +113,15 @@ def build_adapter(
 
     ``use_batch_api`` opts OpenAI and Anthropic adapters into their native batch
     APIs (cheaper, asynchronous). It is ignored by providers without batch
-    support (echo, bedrock, openai-compatible).
+    support (echo, bedrock, copilot, grok, gemini, openai-compatible).
     """
     provider_key = provider.strip().lower()
     provider_key = _PROVIDER_ALIASES.get(provider_key, provider_key)
     if provider_key == "copilot":
         return _build_copilot_adapter(model, temperature=temperature, client=client)
-    if provider_key in _COMPAT_PRESETS:
-        return _build_compat_preset_adapter(
-            provider_key, model, temperature=temperature, base_url=base_url, client=client
+    if provider_key in _SDK_PROVIDERS:
+        return _build_sdk_provider_adapter(
+            provider_key, model, temperature=temperature, client=client
         )
     model_id = _resolve_model(provider_key, model)
     if provider_key == "echo":
@@ -188,28 +187,23 @@ def _build_copilot_adapter(
     )
 
 
-def _build_compat_preset_adapter(
+def _build_sdk_provider_adapter(
     provider_key: str,
     model: str | None,
     *,
     temperature: float,
-    base_url: str | None,
     client: Any | None,
 ) -> Adapter:
-    """Build a generic OpenAI-compatible adapter (Grok, Gemini, Copilot, ...)."""
-    preset = _COMPAT_PRESETS[provider_key]
-    endpoint = base_url or _first_env(preset.base_url_envs) or preset.default_base_url
-    model_id = model or _first_env(preset.model_envs) or preset.default_model
-    api_key = _first_env(preset.api_key_envs)
-    kwargs: dict[str, Any] = {
-        "model": model_id,
-        "base_url": endpoint,
-        "temperature": temperature,
-        "client": client,
-    }
-    if api_key:
-        kwargs["api_key"] = api_key
-    return OpenAICompatibleAdapter(**kwargs)
+    """Build a branded provider adapter backed by its official SDK (Grok, Gemini)."""
+    spec = _SDK_PROVIDERS[provider_key]
+    model_id = model or _first_env(spec.model_envs) or spec.default_model
+    api_key = _first_env(spec.api_key_envs)
+    return spec.adapter(
+        model=model_id,
+        temperature=temperature,
+        api_key=api_key,
+        client=client,
+    )
 
 
 def _first_env(env_names: Sequence[str]) -> str | None:

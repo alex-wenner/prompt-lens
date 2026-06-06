@@ -12,11 +12,11 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
 
     This is the generic escape hatch for providers promptlens does not ship a
     dedicated adapter for. Point ``base_url`` at the provider gateway and it works
-    with xAI Grok (``https://api.x.ai/v1``), Google Gemini's OpenAI-compatibility
-    layer (``https://generativelanguage.googleapis.com/v1beta/openai/``), local
-    servers such as Ollama or vLLM, and any other OpenAI-compatible endpoint.
-    GitHub Copilot has its own dedicated :class:`~promptlens.adapters.CopilotAdapter`
-    backed by the official Copilot SDK.
+    with local servers such as Ollama or vLLM, hosted gateways, and any other
+    OpenAI-compatible endpoint. Branded providers have their own official-SDK
+    adapters instead: xAI Grok via :class:`~promptlens.adapters.GrokAdapter`,
+    Google Gemini via :class:`~promptlens.adapters.GeminiAdapter`, and GitHub
+    Copilot via :class:`~promptlens.adapters.CopilotAdapter`.
 
     ``logprobs`` defaults to off because most compatibility layers do not return
     token log probabilities; enable it only for endpoints/models that do.
