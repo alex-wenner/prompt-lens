@@ -67,9 +67,19 @@ class AttributionHarness:
         tools: ToolDefinitions | None = None,
         compare_models: list[str] | None = None,
     ) -> CostEstimate:
+        """Preview attribution cost without making provider calls.
+
+        Segmentation and masking run offline, so input tokens are counted per
+        actual masked prompt rather than assuming every call resends the full
+        prompt. Supplementary rewrites and the optimizer's rewrite call are not
+        included; they add adapter calls on top of this estimate.
+        """
         features = self.segmenter.segment(prompt, tools=tools)
-        evaluations = self.sampler.estimate_evaluations(len(features))
-        evaluations *= self.samples_per_coalition
+        masked_prompts = [
+            self.masker.mask(features, coalition)
+            for coalition in self.sampler.sample(len(features))
+        ]
+        evaluations = len(masked_prompts) * self.samples_per_coalition
         return estimate_cost(
             model=self.adapter.model,
             prompt=prompt,
@@ -77,6 +87,7 @@ class AttributionHarness:
             evaluations=evaluations,
             expected_output_tokens=self.expected_output_tokens,
             compare_models=compare_models,
+            evaluation_prompts=masked_prompts,
         )
 
     def explain(self, prompt: str, tools: ToolDefinitions | None = None) -> AttributionResult:

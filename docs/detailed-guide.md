@@ -88,6 +88,43 @@ Only some models return token log probabilities. The OpenAI GPT-5 reasoning fami
 
 Provider adapters are intentionally thin. They should make it easy to swap providers while keeping the attribution logic stable.
 
+#### Attributing whole agent runs
+
+The harness never inspects what an adapter does to produce its output, so the unit under attribution does not have to be a single completion — it can be an **entire agent loop** with multiple model turns and tool executions. `AgentAdapter` makes that explicit:
+
+- The *prompt* the harness segments and masks is the agent's **system prompt**.
+- The **task** (the user question or questions) is held fixed across every coalition.
+- Each evaluation answers: *how does the agent's trajectory change when this piece of its instructions is hidden?*
+
+You supply one callable, `run_agent(system_prompt, task, tools)`, which must execute a **fresh, stateless** agent run (build the agent from scratch each call so coalitions never share conversation memory) and return a `CompletionOutput` whose `text` is the final answer and whose `tool_calls` lists every tool invocation in order. `messages_to_output` builds that from a Bedrock Converse-style message history — the format Strands Agents exposes as `agent.messages` — so a Strands integration looks like:
+
+```python
+from promptlens import AttributionHarness
+from promptlens.adapters import AgentAdapter, messages_to_output
+from promptlens.scorers import CompositeScorer, EmbeddingScorer, ToolSequenceDriftScorer
+from promptlens.segmenters import ParagraphSegmenter
+
+def run_strands(system_prompt: str, task: str, tools) -> "CompletionOutput":
+    from strands import Agent  # illustrative; any agent runtime works
+    agent = Agent(system_prompt=system_prompt, tools=[...])  # fresh agent per run
+    agent(task)
+    return messages_to_output(agent.messages)
+
+harness = AttributionHarness(
+    adapter=AgentAdapter(run_strands, task="What is our refund policy?"),
+    segmenter=ParagraphSegmenter(),
+    scorer=ToolSequenceDriftScorer(),  # did the agent's tool path change?
+)
+result = harness.explain(SYSTEM_PROMPT)
+```
+
+Score trajectories with `ToolSequenceDriftScorer` (normalized edit distance between the baseline and candidate tool-call sequences), a text scorer over the final answer, an objective scorer such as `ToolAccuracyScorer`, or a weighted combination via `CompositeScorer` — e.g. `0.6` tool-sequence drift plus `0.4` final-answer embedding drift.
+
+Two caveats specific to agent runs:
+
+- **Cost**: each evaluation is a full agent run — one provider call *per agent step*, not one per coalition — and trajectories can lengthen when instructions are masked. `estimate()` assumes a single completion per evaluation, so treat it as a floor and prefer coarse segmenters (paragraphs or sections) for agent attribution.
+- **Variance**: agent loops compound non-determinism across steps. Use `perturbation_scale="standard"` or `samples_per_coalition > 1` so the per-feature standard errors tell you whether a ranking is stable.
+
 Coalition evaluations are independent, so `Adapter.complete_batch()` defines a batch path the harness always uses. The default implementation calls `complete()` per prompt, but `OpenAIAdapter` and `AnthropicAdapter` accept `use_batch_api=True` to route batches through the provider's native Batch / Message Batches API (roughly 50% cheaper, asynchronous with polling via `poll_interval_seconds`). It is opt-in because batch jobs trade latency for cost; the default behavior is unchanged. From the CLI, pass `--batch-api` on `explain` or `optimize` to enable it for the OpenAI and Anthropic providers.
 
 ### Segmenters
@@ -125,6 +162,7 @@ Scorers convert output differences into numeric signals.
 - `EmbeddingScorer` measures semantic drift with an embedding client. On the CLI the `embedding` scorer is provider-backed: pass a scorer config naming a provider, e.g. `{"provider": "openai", "model": "text-embedding-3-small"}`. For fully offline smoke runs use the `embedding-local` scorer, a deterministic text-shape fallback that is **not** semantic and should never be used for real attribution.
 - `LogprobScorer` compares average token log probabilities when the adapter provides them. Use it only with models that return logprobs (e.g. OpenAI `gpt-4o`/`gpt-4.1`); GPT-5 reasoning models and Anthropic models do not expose them.
 - `ToolAccuracyScorer` checks whether a completion selected an expected tool and required arguments.
+- `ToolSequenceDriftScorer` (`tool-sequence` on the CLI) measures the normalized edit distance between the baseline and candidate tool-call sequences — tool-choice drift for single completions, tool-*path* drift for `AgentAdapter` runs.
 - `CompositeScorer` combines several scorers as a weighted sum, e.g. `0.7` embedding drift plus `0.3` length drift, when "what changed" is best captured by more than one signal.
 
 The right scorer depends on what "changed" means for your task. For factual answer quality, semantic distance may be useful. For tool routing, tool accuracy is usually more direct.
@@ -175,6 +213,16 @@ promptlens estimate \
 ```
 
 The estimate includes baseline plus masked evaluations. If a prompt has five features and the sampler runs one leave-one-out sweep, expect six total model calls: one baseline call and five masked calls.
+
+Segmentation and masking run offline, so input tokens are counted per **actual masked prompt** rather than assuming every call resends the full prompt — with `--masker drop` the estimate shrinks accordingly. Token counting uses `tiktoken` when it is installed (via the `openai` extra) and the model is an OpenAI-family model; everything else uses a conservative character heuristic. Claude deliberately stays on the heuristic even when `tiktoken` is available, because `tiktoken` is OpenAI's tokenizer and undercounts Claude tokens by 15–20% — exact Claude counts would need the provider's `count_tokens` endpoint, which a dry run should not call. The estimate table reports which counter produced the numbers.
+
+You don't have to run `estimate` separately: `explain` and `optimize` accept `--dry-run` (print the estimate and exit without provider calls) and `--confirm` (print the estimate, then ask before spending). Combined with `--segmenter auto` — which picks sections for markdown with headings, paragraphs for text with blank lines, and sentences otherwise — the low-decision path is:
+
+```bash
+promptlens explain --prompt ./prompt.md --provider openai --segmenter auto --confirm
+```
+
+Note the estimate covers attribution calls only: supplementary rewrites and the optimizer's final rewrite call add adapter calls on top, and for `AgentAdapter` runs each evaluation is a whole agent loop rather than one completion.
 
 Compare model pricing entries with `--compare`:
 

@@ -3,6 +3,7 @@ from promptlens.scorers.embeddings import OpenAIEmbeddingClient
 from promptlens.scorers.logprob import LogprobScorer
 from promptlens.scorers.text import EmbeddingScorer, LengthDriftScorer, cosine_distance
 from promptlens.scorers.tool_accuracy import ToolAccuracyScorer
+from promptlens.scorers.trajectory import ToolSequenceDriftScorer
 
 __all__ = [
     "CompositeScorer",
@@ -11,5 +12,6 @@ __all__ = [
     "LogprobScorer",
     "OpenAIEmbeddingClient",
     "ToolAccuracyScorer",
+    "ToolSequenceDriftScorer",
     "cosine_distance",
 ]

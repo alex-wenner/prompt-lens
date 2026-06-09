@@ -28,6 +28,7 @@ class CostEstimate(BaseModel):
     output_cost_usd: float
     pricing_updated: str
     comparisons: dict[str, float] = Field(default_factory=dict)
+    token_counter: str = "heuristic"
 
     @property
     def total_usd(self) -> float:
@@ -48,7 +49,7 @@ class CostEstimate(BaseModel):
         table.add_row("model", self.model)
         table.add_row("features", str(self.features))
         table.add_row("evaluations", str(self.evaluations))
-        table.add_row("input tokens", str(self.input_tokens))
+        table.add_row("input tokens", f"{self.input_tokens} ({self.token_counter})")
         table.add_row("output tokens", str(self.output_tokens))
         table.add_row("input cost", f"${self.input_cost_usd:.6f}")
         table.add_row("output cost", f"${self.output_cost_usd:.6f}")
