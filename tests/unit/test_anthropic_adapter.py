@@ -103,3 +103,22 @@ def test_batch_request_raises_on_failure() -> None:
 def test_invalid_poll_interval_rejected() -> None:
     with pytest.raises(ValueError, match="poll_interval_seconds"):
         AnthropicAdapter(model="claude", poll_interval_seconds=0)
+
+
+def test_temperature_sent_for_models_that_accept_it() -> None:
+    messages = _FakeMessages()
+    client = _FakeClient()
+    client.messages = SimpleNamespace(create=messages.create, batches=_FakeBatches())
+    AnthropicAdapter(model="claude-sonnet-4-6", temperature=0.3, client=client).complete("hello")
+
+    assert messages.calls[0]["temperature"] == 0.3
+
+
+def test_temperature_omitted_for_opus_4_7_plus() -> None:
+    # Claude Opus 4.7+ removed sampling parameters; sending temperature is a 400.
+    messages = _FakeMessages()
+    client = _FakeClient()
+    client.messages = SimpleNamespace(create=messages.create, batches=_FakeBatches())
+    AnthropicAdapter(model="claude-opus-4-8", temperature=0.3, client=client).complete("hello")
+
+    assert "temperature" not in messages.calls[0]

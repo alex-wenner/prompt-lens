@@ -6,9 +6,11 @@ from pydantic import BaseModel, ConfigDict
 
 from promptlens.core.result import CostEstimate
 
-PRICING_UPDATED = "2026-06-06"
+PRICING_UPDATED = "2026-06-09"
 MODEL_PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "anthropic/claude-opus-4-8": (5.00, 25.00),
+    "anthropic/claude-opus-4-7": (5.00, 25.00),
+    "anthropic/claude-opus-4-6": (5.00, 25.00),
     "anthropic/claude-sonnet-4-6": (3.00, 15.00),
     "anthropic/claude-haiku-4-5": (1.00, 5.00),
     "openai/gpt-5.5": (5.00, 30.00),

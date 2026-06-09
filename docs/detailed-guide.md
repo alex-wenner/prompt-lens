@@ -151,7 +151,12 @@ The built-in leave-one-out sampler evaluates each feature by masking it independ
 
 Repeats are helpful when using non-deterministic providers. More repeats can produce standard errors, but they also increase cost. Math remains undefeated.
 
-`RandomCoalitionSampler` (`--sampler random` on the CLI) masks several features at once: each coalition independently includes every feature with probability `0.5`. Because the drift attributed to a feature is then averaged over many partially-masked contexts rather than the single full-prompt context leave-one-out uses, the random sampler is sensitive to interactions a pure leave-one-out sweep misses. It is an approximation, so it needs enough coalitions to stabilize (the CLI scales the coalition count with `--scale`) and supports a `seed` for reproducibility.
+`RandomCoalitionSampler` (`--sampler random` on the CLI) masks several features at once: each coalition independently includes every feature with probability `0.5`. Because a feature's effect is then observed across many partially-masked contexts rather than the single full-prompt context leave-one-out uses, the random sampler is sensitive to interactions a pure leave-one-out sweep misses. It is an approximation, so it needs enough coalitions to stabilize (the CLI scales the coalition count with `--scale`) and supports a `seed` for reproducibility.
+
+The estimator differs between the two samplers, and the difference matters:
+
+- With **leave-one-out**, every coalition masks exactly one feature, so the mean drift over a feature's masked coalitions *is* its marginal effect relative to the full prompt. The harness uses that mean directly.
+- With **random coalitions**, several features are masked together, so the mean drift over coalitions containing a feature confounds that feature's own effect with the average effect of whatever was co-masked — an inert feature would inherit roughly half the drift of the real drivers. The harness therefore attributes the **masked-vs-kept contrast**: `mean(score | feature masked) − mean(score | feature kept)`. At inclusion probability `0.5` this is a Monte-Carlo estimate of the feature's Banzhaf value, and the shared co-masking offset cancels. One side effect: because the sampler skips the degenerate all-masked and all-kept coalitions, inert features tend to land slightly *below* zero rather than exactly at zero — a conservative direction, since the share normalization only distributes positive attribution mass.
 
 For distributional attribution you can also keep a single leave-one-out sweep but evaluate each coalition multiple times with `samples_per_coalition` (`--samples-per-coalition` on the CLI). At temperature > 0 this turns each coalition into a small distribution: per-coalition scores are averaged, every sample feeds the feature's standard error, and the cost estimator multiplies its evaluation count so the spend preview stays honest.
 
@@ -288,6 +293,7 @@ The library does not collect telemetry, prompts, outputs, PII, API keys, or secr
 ## Current limitations
 
 - Leave-one-out attribution can miss interactions where two features only matter together; `RandomCoalitionSampler` approximates interaction effects but needs more samples.
+- Maskers rebuild the prompt by joining feature texts with a single separator (a space by default), while the baseline run uses the original prompt verbatim. For paragraph or section segmentation this flattens blank lines and headings into spaces, which adds a small formatting drift shared by every coalition. It mostly cancels in rankings (and is subtracted outright by the random-coalition contrast estimator), but you can reduce it at the source by matching the separator to the segmenter, e.g. `PlaceholderMasker(separator="\n\n")` with `ParagraphSegmenter`.
 - Cost grows with feature count, repeat count, samples per coalition, and random coalition count.
 - Scores are only as meaningful as the selected scorer, and drift vs. objective orientation must match your question.
 - Provider adapters are intentionally minimal: they flatten prompts into a single user message and may not expose every provider option or native multi-turn / system-message structure.

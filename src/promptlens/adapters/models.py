@@ -4,7 +4,7 @@ Capability data is sourced from the official provider documentation and was
 last reviewed on :data:`CAPABILITIES_REVIEWED`:
 
 * OpenAI models and pricing — https://developers.openai.com/api/docs/models
-* Anthropic models — https://docs.anthropic.com/en/docs/about-claude/models/overview
+* Anthropic models — https://platform.claude.com/docs/en/about-claude/models/overview
 
 The most important capability tracked here is **logprobs support**, because only
 some models return token log probabilities (which :class:`~promptlens.scorers.logprob.LogprobScorer`
@@ -13,6 +13,11 @@ reasoning models — do not accept the ``logprobs`` parameter on the Chat
 Completions API and reject the request, whereas the GPT-4o and GPT-4.1 families
 do. Anthropic's Messages API does not expose token log probabilities for any
 model, so every Anthropic/Bedrock model is treated as not supporting logprobs.
+
+The registry also tracks **temperature support**: Claude Opus 4.7 and later
+removed the sampling parameters (``temperature``, ``top_p``, ``top_k``) from the
+Messages API and return a 400 error if they are sent, so adapters must omit
+``temperature`` for those models.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ class ModelInfo(BaseModel):
     name: str
     provider: str
     supports_logprobs: bool
+    supports_temperature: bool = True
 
 
 # OpenAI Chat Completions models that return token log probabilities.
@@ -73,6 +79,10 @@ _ANTHROPIC_MODELS = (
     "claude-haiku-4-5",
 )
 
+# Anthropic models that removed the sampling parameters (temperature, top_p,
+# top_k); the Messages API returns a 400 error if any of them are sent.
+_ANTHROPIC_NO_TEMPERATURE_MODELS = frozenset({"claude-opus-4-8", "claude-opus-4-7"})
+
 
 def _build_registry() -> dict[str, ModelInfo]:
     registry: dict[str, ModelInfo] = {}
@@ -81,7 +91,12 @@ def _build_registry() -> dict[str, ModelInfo]:
     for name in _OPENAI_NON_LOGPROB_MODELS:
         registry[name] = ModelInfo(name=name, provider="openai", supports_logprobs=False)
     for name in _ANTHROPIC_MODELS:
-        registry[name] = ModelInfo(name=name, provider="anthropic", supports_logprobs=False)
+        registry[name] = ModelInfo(
+            name=name,
+            provider="anthropic",
+            supports_logprobs=False,
+            supports_temperature=name not in _ANTHROPIC_NO_TEMPERATURE_MODELS,
+        )
     return registry
 
 
@@ -117,4 +132,17 @@ def supports_logprobs(model: str) -> bool:
         return False
     if "claude" in name:
         return False
+    return True
+
+
+def supports_temperature(model: str) -> bool:
+    """Return whether ``model`` accepts the ``temperature`` sampling parameter.
+
+    Known models use their recorded capability. Unknown models default to
+    supporting temperature, matching the historical behavior for every provider
+    other than the Claude Opus 4.7+ family.
+    """
+    info = KNOWN_MODELS.get(_normalize(model))
+    if info is not None:
+        return info.supports_temperature
     return True
