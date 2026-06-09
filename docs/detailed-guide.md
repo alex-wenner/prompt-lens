@@ -125,6 +125,42 @@ Two caveats specific to agent runs:
 - **Cost**: each evaluation is a full agent run — one provider call *per agent step*, not one per coalition — and trajectories can lengthen when instructions are masked. `estimate()` assumes a single completion per evaluation, so treat it as a floor and prefer coarse segmenters (paragraphs or sections) for agent attribution.
 - **Variance**: agent loops compound non-determinism across steps. Use `perturbation_scale="standard"` or `samples_per_coalition > 1` so the per-feature standard errors tell you whether a ranking is stable.
 
+##### Why trajectories are compared whole, not turn-by-turn
+
+A tempting finer-grained design is to compare baseline turn *i* against candidate turn *i* and treat each mismatch as its own attribution signal. promptlens deliberately does **not** do this, for three reasons:
+
+1. **Turns stop being comparable after the first divergence.** Once the masked agent does something different at step *k* — calls a different tool, gets a different result — every later turn is conditioned on a different history. Candidate turn *k+2* is not a noisy re-measurement of baseline turn *k+2*; it is a turn from a different conversation. Counting each post-divergence mismatch as independent evidence double-counts a single upstream change, and systematically over-credits features that happen to diverge *early* over features that matter *most*.
+2. **Index pairing isn't even well defined.** Masked instructions routinely shorten or lengthen the loop, so there is no guaranteed correspondence between baseline turn *i* and candidate turn *i*.
+3. **Finer grain doesn't tame stochasticity — it amplifies it.** Sampling randomness compounds across an agent loop, so each per-turn comparison is a *noisier* measurement than the trajectory-level one, and there are more of them. The statistical remedy for probabilistic outputs is repeats (`samples_per_coalition`, `perturbation_scale`) feeding the per-feature standard errors, not finer slicing.
+
+Note that `ToolSequenceDriftScorer` already compares turns in the one way that *is* sound: the edit distance computes an optimal **alignment** between the two tool paths — allowing insertions, deletions, and substitutions — and charges one unit per mismatch. "Same five steps but the verify call was skipped" scores 1/5, rather than "everything after step 2 differs". The raw trajectories are kept on each `CoalitionEvaluation` (via `output.raw`), so when a feature ranks high you can inspect *where* the paths first split as a debugging follow-up.
+
+##### Per-question attribution
+
+There is one finer "turn" axis that is statistically well-posed: the **user questions**. Unlike model-generated turns, questions are fixed inputs, so answer *i* corresponds to question *i* in every coalition by construction — no alignment problem, no divergence cascade. `explain_per_question` exploits this to produce a feature × question view:
+
+```python
+from promptlens.adapters import AgentAdapter, explain_per_question
+
+harness = AttributionHarness(
+    adapter=AgentAdapter(run_strands, task="placeholder"),
+    segmenter=ParagraphSegmenter(),
+    scorer=ToolSequenceDriftScorer(),
+)
+per_question = explain_per_question(
+    harness,
+    SYSTEM_PROMPT,
+    questions=[
+        "What is the refund policy?",
+        "What is the total of 2 and 3?",
+    ],
+)
+per_question.print()        # feature rows × question columns, shares per cell
+per_question.share_matrix() # {"paragraph_1": [0.9, 0.0], ...}
+```
+
+This answers questions a single aggregate run cannot: *which instruction carries which kind of question* — e.g. a paragraph that dominates refund questions but is dead weight for arithmetic. Each question runs as its own independent agent run per coalition, so cost scales with the number of questions; `per_question.results` holds a full `AttributionResult` per question, including per-question cost estimates. Conversation-dependent behavior (where an answer should depend on earlier questions) belongs inside your `run_agent` callable — fold the prior turns into the task string you build there.
+
 Coalition evaluations are independent, so `Adapter.complete_batch()` defines a batch path the harness always uses. The default implementation calls `complete()` per prompt, but `OpenAIAdapter` and `AnthropicAdapter` accept `use_batch_api=True` to route batches through the provider's native Batch / Message Batches API (roughly 50% cheaper, asynchronous with polling via `poll_interval_seconds`). It is opt-in because batch jobs trade latency for cost; the default behavior is unchanged. From the CLI, pass `--batch-api` on `explain` or `optimize` to enable it for the OpenAI and Anthropic providers.
 
 ### Segmenters

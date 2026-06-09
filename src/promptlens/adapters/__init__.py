@@ -1,4 +1,4 @@
-from promptlens.adapters.agent import AgentAdapter, messages_to_output
+from promptlens.adapters.agent import AgentAdapter, explain_per_question, messages_to_output
 from promptlens.adapters.anthropic import AnthropicAdapter
 from promptlens.adapters.bedrock import BedrockAdapter
 from promptlens.adapters.copilot import CopilotAdapter
@@ -14,6 +14,7 @@ __all__ = [
     "BedrockAdapter",
     "CopilotAdapter",
     "EchoAdapter",
+    "explain_per_question",
     "GeminiAdapter",
     "GrokAdapter",
     "OpenAIAdapter",

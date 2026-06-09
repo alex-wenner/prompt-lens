@@ -206,6 +206,59 @@ class AttributionResult(BaseModel):
             Console().print(supplementary_table)
 
 
+class PerQuestionAttribution(BaseModel):
+    """Per-question attribution over a fixed multi-question task.
+
+    Produced by :func:`promptlens.adapters.explain_per_question`. Each question
+    in the task gets its own complete :class:`AttributionResult`, so a feature's
+    importance can be compared *across* questions — "this instruction carries
+    refund questions but is dead weight for shipping questions". Per-question
+    scoring is statistically well-posed because the questions are fixed inputs
+    rather than model-generated turns: answer *i* always corresponds to
+    question *i*, in every coalition.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    questions: list[str]
+    results: list[AttributionResult]
+
+    def share_matrix(self) -> dict[str, list[float]]:
+        """Map each feature name to its normalized share per question."""
+        matrix: dict[str, list[float]] = {}
+        for column, result in enumerate(self.results):
+            for attribution, share in result.ranked():
+                row = matrix.setdefault(
+                    attribution.feature.name, [0.0] * len(self.results)
+                )
+                row[column] = share
+        return matrix
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "questions": self.questions,
+            "share_matrix": self.share_matrix(),
+            "results": [result.to_dict() for result in self.results],
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+
+    def print(self) -> None:
+        table = Table(title="promptlens Attribution by question")
+        table.add_column("Feature")
+        for question in self.questions:
+            label = question.replace("\n", " ")
+            table.add_column(label[:40] + ("…" if len(label) > 40 else ""), justify="right")
+        matrix = self.share_matrix()
+        ordered = sorted(
+            matrix.items(), key=lambda item: max(item[1], default=0.0), reverse=True
+        )
+        for feature_name, shares in ordered:
+            table.add_row(feature_name, *[f"{share * 100:.1f}%" for share in shares])
+        Console().print(table)
+
+
 class OptimizationResult(BaseModel):
     """An LLM-proposed prompt rewrite derived from attribution evidence."""
 

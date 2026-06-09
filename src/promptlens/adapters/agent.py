@@ -16,9 +16,14 @@ callable the user supplies.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.result import PerQuestionAttribution
+
+if TYPE_CHECKING:
+    from promptlens.core.harness import AttributionHarness
+    from promptlens.core.result import AttributionResult
 
 # One full, stateless agent run: (system_prompt, task, tools) -> CompletionOutput.
 AgentRunner = Callable[[str, str, "ToolDefinitions | None"], CompletionOutput]
@@ -58,6 +63,46 @@ class AgentAdapter(Adapter):
             )
             raise TypeError(msg)
         return output
+
+
+def explain_per_question(
+    harness: AttributionHarness,
+    prompt: str,
+    questions: Sequence[str],
+    tools: ToolDefinitions | None = None,
+) -> PerQuestionAttribution:
+    """Attribute the system prompt separately for each question of a task.
+
+    This is the finer "turn" granularity that is statistically sound for agent
+    runs: the questions are fixed *inputs*, so answer ``i`` corresponds to
+    question ``i`` in every coalition by construction — unlike model-generated
+    turns, which stop being comparable once trajectories diverge. The result is
+    a feature × question view: which instruction carries which question.
+
+    Each question runs as its own independent agent run per coalition (cost
+    scales with ``len(questions)``). Conversation-dependent behavior — where a
+    question's answer should depend on earlier questions — belongs inside the
+    ``run_agent`` callable (e.g. fold prior turns into the task string).
+
+    ``harness.adapter`` must be an :class:`AgentAdapter`; its ``task`` is
+    swapped per question and restored afterwards.
+    """
+    adapter = harness.adapter
+    if not isinstance(adapter, AgentAdapter):
+        msg = "explain_per_question requires the harness adapter to be an AgentAdapter"
+        raise TypeError(msg)
+    if not questions:
+        msg = "explain_per_question requires at least one question"
+        raise ValueError(msg)
+    original_task = adapter.task
+    results: list[AttributionResult] = []
+    try:
+        for question in questions:
+            adapter.task = question
+            results.append(harness.explain(prompt, tools=tools))
+    finally:
+        adapter.task = original_task
+    return PerQuestionAttribution(questions=list(questions), results=results)
 
 
 def messages_to_output(

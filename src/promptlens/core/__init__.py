@@ -19,6 +19,7 @@ from promptlens.core.result import (
     CostEstimate,
     FeatureAttribution,
     OptimizationResult,
+    PerQuestionAttribution,
     SupplementaryEvaluation,
 )
 from promptlens.core.tools import (
@@ -43,6 +44,7 @@ __all__ = [
     "MODEL_PRICING_USD_PER_MTOK",
     "Masker",
     "OptimizationResult",
+    "PerQuestionAttribution",
     "Sampler",
     "Scorer",
     "Segmenter",
