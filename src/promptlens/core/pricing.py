@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import lru_cache
 from typing import Any
 
@@ -102,6 +102,7 @@ def estimate_cost(
     expected_output_tokens: int = 300,
     compare_models: list[str] | None = None,
     evaluation_prompts: Sequence[str] | None = None,
+    token_count_fn: Callable[[str], int] | None = None,
 ) -> CostEstimate:
     """Estimate provider cost for baseline plus coalition evaluations.
 
@@ -110,15 +111,25 @@ def estimate_cost(
     every call resends the full prompt — maskers like ``DropMasker`` produce
     shorter prompts, so this tightens the estimate. ``evaluations`` may exceed
     ``len(evaluation_prompts)`` when each coalition is sampled multiple times.
+
+    ``token_count_fn`` overrides the local counters with an exact provider one
+    (e.g. Anthropic's free ``count_tokens`` metering endpoint); the resulting
+    estimate reports ``token_counter="provider"``.
     """
     total_calls = evaluations + 1
+
+    def _count(text: str) -> tuple[int, str]:
+        if token_count_fn is not None:
+            return token_count_fn(text), "provider"
+        return count_tokens(text, model)
+
     if evaluation_prompts:
-        baseline_tokens, counter = count_tokens(prompt, model)
-        per_sweep = sum(count_tokens(masked, model)[0] for masked in evaluation_prompts)
+        baseline_tokens, counter = _count(prompt)
+        per_sweep = sum(_count(masked)[0] for masked in evaluation_prompts)
         repeats = max(1, round(evaluations / len(evaluation_prompts)))
         input_tokens = baseline_tokens + per_sweep * repeats
     else:
-        per_call, counter = count_tokens(prompt, model)
+        per_call, counter = _count(prompt)
         input_tokens = per_call * total_calls
     output_tokens = expected_output_tokens * total_calls
     input_rate, output_rate = MODEL_PRICING_USD_PER_MTOK.get(model, (0.0, 0.0))

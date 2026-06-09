@@ -53,7 +53,7 @@ Estimate the cost of an attribution run without making provider calls:
 promptlens estimate --prompt "Write a haiku about testing" --model openai/gpt-4o-mini
 ```
 
-Or skip the separate step: `--dry-run` prints the estimate and exits, `--confirm` shows it and asks before spending, and `--segmenter auto` picks a segmenter from the prompt's shape. Input tokens are counted per actual masked prompt (with `tiktoken` for OpenAI-family models when installed; a conservative heuristic otherwise):
+Or skip the separate step: `--dry-run` prints the estimate and exits, `--confirm` shows it and asks before spending, and `--segmenter auto` picks a segmenter from the prompt's shape. Input tokens are counted per actual masked prompt — with `tiktoken` for OpenAI-family models when installed, a conservative heuristic otherwise, or exactly via the provider's free `count_tokens` metering endpoint with `--exact-tokens` (anthropic; needs credentials but runs no inference):
 
 ```bash
 promptlens explain --prompt ./prompt.md --provider openai --segmenter auto --confirm

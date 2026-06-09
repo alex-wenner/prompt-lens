@@ -89,11 +89,12 @@ def _cost_gate(
     *,
     dry_run: bool,
     confirm: bool,
+    exact_tokens: bool = False,
 ) -> None:
-    """Print the cost estimate and stop (dry run) or ask before provider calls."""
+    """Print the cost estimate and stop (dry run) or ask before inference calls."""
     if not dry_run and not confirm:
         return
-    harness.estimate(prompt_text, tools=tools).print()
+    harness.estimate(prompt_text, tools=tools, exact_tokens=exact_tokens).print()
     if dry_run:
         raise typer.Exit()
     typer.confirm("Run attribution with these provider calls?", abort=True)
@@ -253,6 +254,17 @@ def explain(
             "--confirm", help="Show the cost estimate and ask before making provider calls."
         ),
     ] = False,
+    exact_tokens: Annotated[
+        bool,
+        typer.Option(
+            "--exact-tokens",
+            help=(
+                "Count estimate tokens with the provider's free count_tokens endpoint "
+                "when the adapter supports it (anthropic). Needs credentials and network "
+                "but runs no inference; other providers fall back to local counting."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Run attribution using the SDK pipeline."""
     prompt_text = _read_prompt(prompt)
@@ -273,7 +285,14 @@ def explain(
         samples_per_coalition=samples_per_coalition,
         use_batch_api=batch_api,
     )
-    _cost_gate(harness, prompt_text, tool_definitions, dry_run=dry_run, confirm=confirm)
+    _cost_gate(
+        harness,
+        prompt_text,
+        tool_definitions,
+        dry_run=dry_run,
+        confirm=confirm,
+        exact_tokens=exact_tokens,
+    )
     result = harness.explain(prompt_text, tools=tool_definitions)
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")
@@ -338,6 +357,17 @@ def optimize(
             ),
         ),
     ] = False,
+    exact_tokens: Annotated[
+        bool,
+        typer.Option(
+            "--exact-tokens",
+            help=(
+                "Count estimate tokens with the provider's free count_tokens endpoint "
+                "when the adapter supports it (anthropic). Needs credentials and network "
+                "but runs no inference; other providers fall back to local counting."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Run attribution, then propose an attribution-informed prompt rewrite."""
     prompt_text = _read_prompt(prompt)
@@ -357,7 +387,14 @@ def optimize(
         use_batch_api=batch_api,
         with_optimizer=True,
     )
-    _cost_gate(harness, prompt_text, tool_definitions, dry_run=dry_run, confirm=confirm)
+    _cost_gate(
+        harness,
+        prompt_text,
+        tool_definitions,
+        dry_run=dry_run,
+        confirm=confirm,
+        exact_tokens=exact_tokens,
+    )
     result = harness.optimize(prompt_text, tools=tool_definitions)
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")

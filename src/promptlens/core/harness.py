@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Callable
 
 from promptlens.core.base import (
     Adapter,
@@ -66,13 +67,20 @@ class AttributionHarness:
         prompt: str,
         tools: ToolDefinitions | None = None,
         compare_models: list[str] | None = None,
+        exact_tokens: bool = False,
     ) -> CostEstimate:
-        """Preview attribution cost without making provider calls.
+        """Preview attribution cost without making inference calls.
 
         Segmentation and masking run offline, so input tokens are counted per
         actual masked prompt rather than assuming every call resends the full
         prompt. Supplementary rewrites and the optimizer's rewrite call are not
         included; they add adapter calls on top of this estimate.
+
+        ``exact_tokens=True`` uses the adapter's exact token counter when it has
+        one (``AnthropicAdapter`` exposes the provider's free ``count_tokens``
+        metering endpoint). That makes one free network call per prompt counted
+        — no inference, no token charges — and falls back silently to the local
+        counters for adapters without exact counting.
         """
         features = self.segmenter.segment(prompt, tools=tools)
         masked_prompts = [
@@ -80,6 +88,14 @@ class AttributionHarness:
             for coalition in self.sampler.sample(len(features))
         ]
         evaluations = len(masked_prompts) * self.samples_per_coalition
+        token_count_fn: Callable[[str], int] | None = None
+        adapter_counter = getattr(self.adapter, "count_tokens", None)
+        if exact_tokens and callable(adapter_counter):
+
+            def _exact_count(text: str) -> int:
+                return int(adapter_counter(text, tools=tools))
+
+            token_count_fn = _exact_count
         return estimate_cost(
             model=self.adapter.model,
             prompt=prompt,
@@ -88,6 +104,7 @@ class AttributionHarness:
             expected_output_tokens=self.expected_output_tokens,
             compare_models=compare_models,
             evaluation_prompts=masked_prompts,
+            token_count_fn=token_count_fn,
         )
 
     def explain(self, prompt: str, tools: ToolDefinitions | None = None) -> AttributionResult:

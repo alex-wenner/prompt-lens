@@ -90,3 +90,49 @@ def test_harness_estimate_reflects_masker_choice() -> None:
 
     # Dropping features outright sends shorter prompts than placeholder masking.
     assert drop.input_tokens < placeholder.input_tokens
+
+
+class _CountingClient:
+    """Fake Anthropic client exposing the count_tokens metering endpoint."""
+
+    def __init__(self) -> None:
+        self.counted: list[str] = []
+        self.messages = SimpleNamespace(
+            create=lambda **kwargs: SimpleNamespace(content=[]),
+            count_tokens=self._count_tokens,
+        )
+
+    def _count_tokens(self, *, model: str, messages: list, **kwargs) -> SimpleNamespace:
+        text = messages[0]["content"]
+        self.counted.append(text)
+        return SimpleNamespace(input_tokens=len(text.split()))
+
+
+def test_exact_tokens_uses_anthropic_count_tokens_endpoint() -> None:
+    from promptlens.adapters import AnthropicAdapter
+
+    client = _CountingClient()
+    harness = AttributionHarness(
+        adapter=AnthropicAdapter(model="claude-sonnet-4-6", client=client),
+        segmenter=SentenceSegmenter(),
+        scorer=LengthDriftScorer(),
+    )
+
+    estimate = harness.estimate("alpha one two. beta three.", exact_tokens=True)
+
+    assert estimate.token_counter == "provider"
+    # Baseline prompt plus one masked prompt per feature, each counted exactly.
+    assert len(client.counted) == 3
+    assert estimate.input_tokens == sum(len(text.split()) for text in client.counted)
+
+
+def test_exact_tokens_falls_back_for_adapters_without_counter() -> None:
+    harness = AttributionHarness(
+        adapter=EchoAdapter(),
+        segmenter=SentenceSegmenter(),
+        scorer=LengthDriftScorer(),
+    )
+
+    estimate = harness.estimate("alpha one. beta two.", exact_tokens=True)
+
+    assert estimate.token_counter == "heuristic"

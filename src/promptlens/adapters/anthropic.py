@@ -57,6 +57,22 @@ class AnthropicAdapter(Adapter):
         response = client.messages.create(**self._request_params(prompt, tools))
         return _message_to_output(response)
 
+    def count_tokens(self, prompt: str, tools: ToolDefinitions | None = None) -> int:
+        """Count input tokens exactly via the Messages API count_tokens endpoint.
+
+        This is a free metering call — it runs no inference and bills no tokens —
+        but it does hit the network, so the harness only uses it when an exact
+        estimate is explicitly requested.
+        """
+        client = self._client or _default_client()
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if tools:
+            kwargs["tools"] = coerce_tools(tools, "anthropic")
+        return int(client.messages.count_tokens(**kwargs).input_tokens)
+
     def complete_batch(
         self, prompts: Sequence[str], tools: ToolDefinitions | None = None
     ) -> list[CompletionOutput]:
