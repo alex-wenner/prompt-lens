@@ -11,12 +11,15 @@ from promptlens.core.base import (
     Scorer,
     Segmenter,
 )
+from promptlens.core.drilldown import explain_drilldown
 from promptlens.core.harness import AttributionHarness
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK, estimate_cost, estimate_tokens
 from promptlens.core.result import (
     AttributionResult,
     CoalitionEvaluation,
     CostEstimate,
+    DrilldownRefinement,
+    DrilldownResult,
     FeatureAttribution,
     OptimizationResult,
     PerQuestionAttribution,
@@ -40,6 +43,8 @@ __all__ = [
     "CoalitionEvaluation",
     "CompletionOutput",
     "CostEstimate",
+    "DrilldownRefinement",
+    "DrilldownResult",
     "Feature",
     "FeatureAttribution",
     "MODEL_PRICING_USD_PER_MTOK",
@@ -61,5 +66,6 @@ __all__ = [
     "coerce_tools",
     "estimate_cost",
     "estimate_tokens",
+    "explain_drilldown",
     "tool",
 ]

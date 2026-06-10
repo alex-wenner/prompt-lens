@@ -48,7 +48,13 @@ pip install -e '.[all]'
 
 ## Quick start
 
-Estimate the cost of an attribution run without making provider calls:
+New here? The interactive wizard walks through every choice — provider, segmentation, scorer, masking, synopsis — with explanations and a cost preview, then prints the equivalent shell command so the run is repeatable:
+
+```bash
+promptlens wizard
+```
+
+Or estimate the cost of an attribution run without making provider calls:
 
 ```bash
 promptlens estimate --prompt "Write a haiku about testing" --model openai/gpt-4o-mini
@@ -86,6 +92,14 @@ result.print()
 
 `explain()` ranks prompt features by importance, displays each feature's normalized share of positive attribution mass, and renders a small weight bar for quick scanning. Pass `perturbation_scale="standard"`, `"full"`, or an integer repeat count to average several leave-one-out sweeps and populate per-feature standard errors for non-deterministic providers.
 
+On a production-sized instruction set, masking one sentence at a time gets expensive — a 60-sentence ops prompt is 60+ calls per sweep, mostly spent confirming boilerplate is boilerplate. **Drill-down** attributes coarse sections first, then re-attributes only the top sections sentence by sentence with the rest of the prompt intact, and reports what it saved:
+
+```bash
+promptlens explain --prompt ./ops-prompt.md --provider anthropic --drilldown --confirm
+```
+
+From the SDK: `explain_drilldown(harness, prompt, top_k=2)`. See the [order-operations example](examples/order_operations_agent/) for it running against a realistic eight-section SOP.
+
 For robustness checks, `explain` can also run optional supplementary LLM rewrites of each feature with `--supplementary-rewrites`. These prompt mutations are reported separately from attribution scores so leave-one-out attribution remains interpretable while still surfacing wording sensitivity.
 
 Every result also shows its **largest output drifts** — the concrete outputs the model produced when the most load-bearing features were masked — alongside the ranked table. To go from numbers to narrative, `--synopsis` makes one extra LLM call that hands the full evidence (ranked features, drift examples, baseline output, tool paths) to a model and asks for a plain-language summary: what carries the output, what is dead weight, what was surprising, what to try next. The synopsis model does not have to be the model under attribution — summarizing structured evidence is easy work, so point it at a local model and keep the narrative step free:
@@ -111,14 +125,17 @@ The proposed rewrite is returned for review, never adopted automatically, and th
 
 ## Examples
 
-The [`examples/`](examples/) directory has three runnable, offline walkthroughs (no API keys required):
+The [`examples/`](examples/) directory has four runnable walkthroughs (no API keys required — they fall back to deterministic offline adapters):
 
+- [`order_operations_agent/`](examples/order_operations_agent/) ⭐ — the flagship: a realistic eight-section operations SOP (business objects, refund policy, escalation matrix, output contract) attributed coarse-to-fine with drill-down and argument-weighted tool drift.
 - [`tool_routing_bug/`](examples/tool_routing_bug/) — find the tool-schema description that makes an agent call the wrong tool, then prove the fix with a before/after tool-accuracy metric.
 - [`system_prompt_cleanup/`](examples/system_prompt_cleanup/) — separate the load-bearing lines of a long system prompt from inert dead weight.
 - [`optimize_before_after/`](examples/optimize_before_after/) — turn attribution evidence into a concrete prompt rewrite.
 
+The examples README also maps **every attribution calculator** (each scorer, both samplers, drill-down) to the example or one-line command that demonstrates it.
+
 ```bash
-python examples/tool_routing_bug/run.py
+python examples/order_operations_agent/run.py
 ```
 
 ## Scorers: offline vs. semantic

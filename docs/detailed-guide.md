@@ -264,7 +264,27 @@ The estimator differs between the two samplers, and the difference matters:
 
 For distributional attribution you can also keep a single leave-one-out sweep but evaluate each coalition multiple times with `samples_per_coalition` (`--samples-per-coalition` on the CLI). At temperature > 0 this turns each coalition into a small distribution: per-coalition scores are averaged, every sample feeds the feature's standard error, and the cost estimator multiplies its evaluation count so the spend preview stays honest.
 
+### Coarse-to-fine drill-down
+
+Sentence granularity over a production-sized instruction set gets expensive fast: a 60-sentence operations prompt is 60+ provider calls per leave-one-out sweep, most of them spent confirming that boilerplate is boilerplate. `explain_drilldown` spends those calls where they matter:
+
+1. **Overview pass** — attribute the prompt at the harness's own (coarse) granularity: markdown sections or paragraphs.
+2. **Refinement passes** — take the `top_k` highest-attribution coarse features and re-attribute each one sentence by sentence, keeping everything outside the refined section **byte-for-byte intact** so every refined evaluation still sees the full instruction set and its scores stay comparable to the overview's.
+
+```python
+from promptlens import explain_drilldown
+
+result = explain_drilldown(harness, prompt, top_k=2)
+result.print()  # overview table, one refined table per hot section, and the call accounting
+```
+
+The result reports `provider_calls_used` versus `flat_sweep_provider_calls` so the saving is explicit — on the eight-section [order-operations example](../examples/order_operations_agent/) that is ~20 calls instead of ~29, and the gap grows with prompt size. On the CLI, pass `--drilldown` (and optionally `--drilldown-top N`); when the segmenter is the default sentence one, drill-down switches the coarse pass to `auto` so there is something to refine. Candidates that cannot be located in the prompt (the synthetic tools feature) or cannot be split into at least two sentences are skipped.
+
+Drill-down's trade-off is honest: on short prompts the per-refinement baseline calls can cost *more* than a flat sweep — it pays off once the prompt outgrows a screenful, which is exactly when flat sweeps stop being affordable.
+
 ## CLI workflow
+
+Prefer to be walked through it? `promptlens wizard` is the interactive path: it explains each choice (provider, segmenter, drill-down, scorer, masker, scale, synopsis) with sensible defaults, shows the cost estimate before any provider call, runs the experiment, and prints the equivalent non-interactive `promptlens explain` command so the configured run can be scripted or shared. Bare `promptlens` shows the banner and points to it.
 
 ### Estimate cost
 

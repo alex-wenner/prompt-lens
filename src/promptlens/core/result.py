@@ -266,6 +266,73 @@ class AttributionResult(BaseModel):
             Console().print(synopsis_table)
 
 
+class DrilldownRefinement(BaseModel):
+    """Fine-grained attribution within one coarse feature of a drill-down run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    feature: Feature
+    result: AttributionResult
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"feature": self.feature.model_dump(), "result": self.result.to_dict()}
+
+
+class DrilldownResult(BaseModel):
+    """Coarse-to-fine attribution: a section overview plus refined hot spots.
+
+    Produced by :func:`promptlens.core.drilldown.explain_drilldown`. The
+    ``overview`` attributes the prompt at coarse granularity (sections or
+    paragraphs); each refinement re-attributes the sentences of one
+    high-attribution coarse feature while the rest of the prompt stays intact.
+    ``provider_calls_used`` versus ``flat_sweep_provider_calls`` shows what the
+    two-stage pass saved over masking every sentence of the prompt one at a
+    time.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    overview: AttributionResult
+    refinements: list[DrilldownRefinement]
+    provider_calls_used: int
+    flat_sweep_provider_calls: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "overview": self.overview.to_dict(),
+            "refinements": [refinement.to_dict() for refinement in self.refinements],
+            "provider_calls_used": self.provider_calls_used,
+            "flat_sweep_provider_calls": self.flat_sweep_provider_calls,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+
+    def print(self) -> None:
+        self.overview.print()
+        for refinement in self.refinements:
+            table = Table(title=f"Refined: {refinement.feature.name}")
+            table.add_column("Feature")
+            table.add_column("Value", justify="right")
+            table.add_column("Share", justify="right")
+            table.add_column("Weight")
+            table.add_column("Text")
+            for attribution, share in refinement.result.ranked():
+                bar = "█" * round(share * _MAX_BAR_WIDTH)
+                table.add_row(
+                    attribution.feature.name,
+                    f"{attribution.value:.4f}",
+                    f"{share * 100:.1f}%",
+                    bar,
+                    attribution.feature.text.replace("\n", " ")[:80],
+                )
+            Console().print(table)
+        Console().print(
+            f"Drill-down used {self.provider_calls_used} provider calls vs "
+            f"~{self.flat_sweep_provider_calls} for a flat sentence sweep."
+        )
+
+
 class PerQuestionAttribution(BaseModel):
     """Per-question attribution over a fixed multi-question task.
 

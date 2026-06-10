@@ -8,6 +8,8 @@ from promptlens.core import (
     CoalitionEvaluation,
     CompletionOutput,
     CostEstimate,
+    DrilldownRefinement,
+    DrilldownResult,
     Feature,
     FeatureAttribution,
     Masker,
@@ -26,6 +28,7 @@ from promptlens.core import (
     ToolLike,
     ToolParameter,
     coerce_tools,
+    explain_drilldown,
     tool,
 )
 
@@ -37,6 +40,8 @@ __all__ = [
     "CoalitionEvaluation",
     "CompletionOutput",
     "CostEstimate",
+    "DrilldownRefinement",
+    "DrilldownResult",
     "Feature",
     "FeatureAttribution",
     "Masker",
@@ -55,5 +60,6 @@ __all__ = [
     "ToolLike",
     "ToolParameter",
     "coerce_tools",
+    "explain_drilldown",
     "tool",
 ]

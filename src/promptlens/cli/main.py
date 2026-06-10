@@ -9,8 +9,16 @@ from typing import Annotated
 
 import typer
 
-from promptlens import Adapter, AttributionHarness, Segmenter
+from promptlens import (
+    Adapter,
+    AttributionHarness,
+    AttributionResult,
+    DrilldownResult,
+    Segmenter,
+    explain_drilldown,
+)
 from promptlens.adapters import EchoAdapter
+from promptlens.cli.banner import print_banner
 from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
 from promptlens.core.base import ToolDefinitions
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
@@ -28,6 +36,14 @@ from promptlens.segmenters import (
 app = typer.Typer(help="Black-box prompt attribution for LLM prompts.")
 
 _SCALE_HELP = "Perturbation scale: quick, standard, full, or an integer repeat count."
+
+
+@app.callback(invoke_without_command=True)
+def _entry(ctx: typer.Context) -> None:
+    """Black-box prompt attribution for LLM prompts."""
+    if ctx.invoked_subcommand is None:
+        print_banner()
+        typer.echo("Try `promptlens wizard` for a guided run, or `promptlens --help`.")
 
 
 def _read_prompt(prompt: str) -> str:
@@ -230,6 +246,24 @@ def explain(
         typer.Option(help="Optional JSON scorer config path."),
     ] = None,
     scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
+    drilldown: Annotated[
+        bool,
+        typer.Option(
+            "--drilldown",
+            help=(
+                "Coarse-to-fine attribution: attribute sections first, then refine "
+                "only the top sections sentence by sentence — far fewer provider "
+                "calls than a flat sentence sweep on long prompts. Uses the auto "
+                "segmenter for the coarse pass unless --segmenter overrides it. "
+                "The cost estimate covers the overview pass; each refined section "
+                "adds roughly one sentence sweep."
+            ),
+        ),
+    ] = False,
+    drilldown_top: Annotated[
+        int,
+        typer.Option(help="How many top coarse features to refine with --drilldown."),
+    ] = 2,
     samples_per_coalition: Annotated[
         int,
         typer.Option(
@@ -300,6 +334,10 @@ def explain(
     """Run attribution using the SDK pipeline."""
     prompt_text = _read_prompt(prompt)
     tool_definitions = _read_tools(tools)
+    if drilldown and segmenter == "sentences":
+        # A sentence-grained coarse pass leaves nothing to refine; drill-down
+        # wants sections or paragraphs first, which "auto" picks from the shape.
+        segmenter = "auto"
     harness = _harness(
         provider=provider,
         model=model,
@@ -324,7 +362,16 @@ def explain(
         confirm=confirm,
         exact_tokens=exact_tokens,
     )
-    result = harness.explain(prompt_text, tools=tool_definitions)
+    result: AttributionResult | DrilldownResult
+    if drilldown:
+        drilldown_result = explain_drilldown(
+            harness, prompt_text, tools=tool_definitions, top_k=drilldown_top
+        )
+        result = drilldown_result
+        synopsis_target = drilldown_result.overview
+    else:
+        result = harness.explain(prompt_text, tools=tool_definitions)
+        synopsis_target = result
     if synopsis:
         writer = LLMSynopsisWriter(
             _synopsis_adapter(
@@ -337,7 +384,10 @@ def explain(
                 temperature=temperature,
             )
         )
-        result = result.with_synopsis(writer.summarize(prompt_text, result))
+        enriched = synopsis_target.with_synopsis(
+            writer.summarize(prompt_text, synopsis_target)
+        )
+        result = result.model_copy(update={"overview": enriched}) if drilldown else enriched
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")
     result.print()
@@ -483,3 +533,10 @@ def list_models() -> None:
     """List built-in pricing entries."""
     for model, (input_rate, output_rate) in sorted(MODEL_PRICING_USD_PER_MTOK.items()):
         typer.echo(f"{model}\tinput=${input_rate}/MTok\toutput=${output_rate}/MTok")
+
+
+# Registered late so the wizard can lazily import this module's helpers without
+# a circular import at load time.
+from promptlens.cli.wizard import run_wizard  # noqa: E402
+
+app.command("wizard")(run_wizard)

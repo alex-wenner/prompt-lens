@@ -227,3 +227,54 @@ def test_explain_accepts_tool_args_scorer() -> None:
 
     assert result.exit_code == 0
     assert "promptlens Attribution" in result.output
+
+
+def test_bare_invocation_shows_banner() -> None:
+    result = CliRunner().invoke(app, [])
+
+    assert result.exit_code == 0
+    assert "see which parts of your prompt actually matter" in result.output
+    assert "promptlens wizard" in result.output
+
+
+def test_explain_drilldown_refines_top_sections(tmp_path) -> None:
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text(
+        "# Role\nBe a support agent. Be kind.\n\n"
+        "# Policy\nRefunds over 100 escalate. Damaged needs RMA. Never refund disputes.\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "result.json"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            str(prompt),
+            "--provider",
+            "echo",
+            "--drilldown",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Refined: section_" in result.output
+    assert "provider calls" in result.output
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["refinements"]
+    assert data["provider_calls_used"] > 0
+
+
+def test_wizard_runs_with_defaults() -> None:
+    answers = "Alpha sentence. Beta sentence.\n" + "\n" * 11
+
+    result = CliRunner().invoke(app, ["wizard"], input=answers)
+
+    assert result.exit_code == 0
+    assert "see which parts of your prompt actually matter" in result.output
+    assert "promptlens Attribution" in result.output
+    assert "Run this again without the wizard" in result.output
+    assert "--provider echo" in result.output
