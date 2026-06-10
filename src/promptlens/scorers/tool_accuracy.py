@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any
-
 from promptlens.core.base import CompletionOutput, Scorer
+from promptlens.scorers._tool_calls import tool_call_arguments, tool_call_name
 
 
 class ToolAccuracyScorer(Scorer):
@@ -28,10 +26,9 @@ class ToolAccuracyScorer(Scorer):
     def score(self, baseline: CompletionOutput, candidate: CompletionOutput) -> float:
         del baseline
         for tool_call in candidate.tool_calls:
-            name = str(tool_call.get("name") or tool_call.get("function", {}).get("name") or "")
-            if name != self.expected_tool:
+            if tool_call_name(tool_call) != self.expected_tool:
                 continue
-            arguments = _parse_arguments(tool_call.get("arguments") or tool_call.get("input"))
+            arguments = tool_call_arguments(tool_call)
             if not isinstance(arguments, dict):
                 return 0.5
             present = sum(
@@ -41,15 +38,3 @@ class ToolAccuracyScorer(Scorer):
                 return 1.0
             return 0.5 + 0.5 * (present / len(self.required_args))
         return 0.0
-
-
-def _parse_arguments(arguments: Any) -> Any:
-    """Decode tool-call arguments, which OpenAI delivers as a JSON string."""
-    if arguments is None:
-        return {}
-    if isinstance(arguments, str):
-        try:
-            return json.loads(arguments)
-        except json.JSONDecodeError:
-            return arguments
-    return arguments

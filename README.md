@@ -23,7 +23,8 @@ Provider surfaces are intentionally thin and optional:
 - xAI Grok via the official `xai-sdk` (use the `grok` provider)
 - Google Gemini via the official `google-genai` SDK (use the `gemini` provider)
 - Amazon Bedrock via `boto3`
-- Any other OpenAI-compatible endpoint via the generic adapter — local/open-weight servers (Ollama, vLLM) and hosted gateways (use `openai-compatible` with a `--base-url`)
+- Local models via Ollama with the first-class `ollama` provider (alias `local`) — no API key, no per-token cost; defaults to `http://localhost:11434/v1` and honors `OLLAMA_MODEL`/`OLLAMA_BASE_URL`/`OLLAMA_HOST`
+- Any other OpenAI-compatible endpoint via the generic adapter — local/open-weight servers (vLLM, llama.cpp) and hosted gateways (use `openai-compatible` with a `--base-url`)
 
 The core stays independent of any specific agent runtime, so integrations such as Strands Agents can be layered on top without coupling the attribution engine to a framework. `AgentAdapter` makes that concrete: treat one **whole agent run** (multiple model turns plus tool executions) as the unit under attribution — mask pieces of the agent's system prompt while the task stays fixed, and score how the trajectory changed with `ToolSequenceDriftScorer` or any text scorer over the final answer. See [attributing whole agent runs](docs/detailed-guide.md#attributing-whole-agent-runs).
 
@@ -87,6 +88,19 @@ result.print()
 
 For robustness checks, `explain` can also run optional supplementary LLM rewrites of each feature with `--supplementary-rewrites`. These prompt mutations are reported separately from attribution scores so leave-one-out attribution remains interpretable while still surfacing wording sensitivity.
 
+Every result also shows its **largest output drifts** — the concrete outputs the model produced when the most load-bearing features were masked — alongside the ranked table. To go from numbers to narrative, `--synopsis` makes one extra LLM call that hands the full evidence (ranked features, drift examples, baseline output, tool paths) to a model and asks for a plain-language summary: what carries the output, what is dead weight, what was surprising, what to try next. The synopsis model does not have to be the model under attribution — summarizing structured evidence is easy work, so point it at a local model and keep the narrative step free:
+
+```bash
+promptlens explain --prompt ./prompt.md --provider anthropic --confirm \
+  --synopsis --synopsis-provider ollama --synopsis-model llama3.2
+```
+
+Or run the whole thing locally — attribution and synopsis — with no provider account at all:
+
+```bash
+promptlens explain --prompt ./prompt.md --provider ollama --model llama3.2 --synopsis
+```
+
 To turn attribution evidence into a concrete prompt edit, `promptlens optimize` runs a leave-one-out sweep and then asks the model to rewrite the whole prompt with that evidence in hand — strengthening load-bearing instructions and pruning inert text:
 
 ```bash
@@ -110,6 +124,8 @@ python examples/tool_routing_bug/run.py
 ## Scorers: offline vs. semantic
 
 The CLI `embedding` scorer is provider-backed and semantic — select it with a scorer config naming a provider, e.g. `{"provider": "openai", "model": "text-embedding-3-small"}`. For fully offline smoke runs, the `embedding-local` scorer is a deterministic text-shape fallback; it is **not** semantic and should never be used for real attribution. See the [detailed guide](docs/detailed-guide.md) for the full scorer list and the drift-vs-objective distinction.
+
+For agent trajectories, the `tool-args` scorer extends tool-sequence drift down into the **arguments** each tool was called with, with explicit per-parameter weights — so you decide whether an agent passing `"reason": undefined` should swing the attribution (by default an explicit null is treated as an omitted parameter, and argument churn can never outweigh calling a different tool). See [weighting tool-call parameters](docs/detailed-guide.md#weighting-tool-call-parameters).
 
 ## Learn more
 

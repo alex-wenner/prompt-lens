@@ -167,3 +167,63 @@ def test_auto_segmenter_picks_sections_for_markdown() -> None:
 
     assert result.exit_code == 0
     assert "section_1" in result.output
+
+
+def test_explain_synopsis_attaches_llm_summary(tmp_path) -> None:
+    output = tmp_path / "result.json"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+            "--synopsis",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Synopsis (echo)" in result.output
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["synopsis"]["model"] == "echo"
+    # The echo adapter returns the brief itself, proving the evidence reached the LLM.
+    assert "Ranked features" in data["synopsis"]["text"]
+    assert data["drift_highlights"]
+
+
+def test_explain_richer_output_shows_drift_highlights() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Largest output drifts" in result.output
+
+
+def test_explain_accepts_tool_args_scorer() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+            "--scorer",
+            "tool-args",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "promptlens Attribution" in result.output

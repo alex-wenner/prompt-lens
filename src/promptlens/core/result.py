@@ -126,6 +126,19 @@ class SupplementaryEvaluation(BaseModel):
         }
 
 
+class Synopsis(BaseModel):
+    """An LLM-written narrative summary of attribution evidence."""
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str
+    model: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"text": self.text, "model": self.model, "metadata": self.metadata}
+
+
 class AttributionResult(BaseModel):
     """Rich attribution output for SDK and CLI consumers."""
 
@@ -136,6 +149,33 @@ class AttributionResult(BaseModel):
     evaluations: list[CoalitionEvaluation]
     cost_estimate: CostEstimate | None = None
     supplementary_evaluations: list[SupplementaryEvaluation] = Field(default_factory=list)
+    synopsis: Synopsis | None = None
+
+    def with_synopsis(self, synopsis: Synopsis) -> AttributionResult:
+        """Return a copy of this result with an attached synopsis."""
+        return self.model_copy(update={"synopsis": synopsis})
+
+    def drift_highlights(self, limit: int = 3) -> list[dict[str, Any]]:
+        """Return the highest-drift coalition evaluations with the features they masked.
+
+        Each entry names the features that were removed, the resulting score,
+        and the output the model produced without them — the concrete "what
+        actually changed" evidence behind the attribution numbers.
+        """
+        names = [attribution.feature.name for attribution in self.attributions]
+        ordered = sorted(self.evaluations, key=lambda item: item.score, reverse=True)
+        return [
+            {
+                "removed": [
+                    names[index]
+                    for index, included in enumerate(evaluation.coalition)
+                    if not included and index < len(names)
+                ],
+                "score": evaluation.score,
+                "output_text": evaluation.output.text,
+            }
+            for evaluation in ordered[:limit]
+        ]
 
     def ranked(self) -> list[tuple[FeatureAttribution, float]]:
         """Return attributions sorted by importance with each one's normalized share.
@@ -168,6 +208,8 @@ class AttributionResult(BaseModel):
                 evaluation.to_dict() for evaluation in self.supplementary_evaluations
             ],
             "cost_estimate": self.cost_estimate.to_dict() if self.cost_estimate else None,
+            "drift_highlights": self.drift_highlights(),
+            "synopsis": self.synopsis.to_dict() if self.synopsis else None,
         }
 
     def to_json(self) -> str:
@@ -190,6 +232,19 @@ class AttributionResult(BaseModel):
                 attribution.feature.text.replace("\n", " ")[:80],
             )
         Console().print(table)
+        highlights = self.drift_highlights()
+        if highlights:
+            highlight_table = Table(title="Largest output drifts")
+            highlight_table.add_column("Removed features")
+            highlight_table.add_column("Score", justify="right")
+            highlight_table.add_column("Output without them")
+            for highlight in highlights:
+                highlight_table.add_row(
+                    ", ".join(highlight["removed"]) or "(none)",
+                    f"{highlight['score']:.4f}",
+                    highlight["output_text"].replace("\n", " ")[:80],
+                )
+            Console().print(highlight_table)
         if self.supplementary_evaluations:
             supplementary_table = Table(title="Supplementary prompt mutations")
             supplementary_table.add_column("Kind")
@@ -204,6 +259,11 @@ class AttributionResult(BaseModel):
                     evaluation.prompt.replace("\n", " ")[:80],
                 )
             Console().print(supplementary_table)
+        if self.synopsis:
+            synopsis_table = Table(title=f"Synopsis ({self.synopsis.model})", show_lines=True)
+            synopsis_table.add_column("Summary")
+            synopsis_table.add_row(self.synopsis.text)
+            Console().print(synopsis_table)
 
 
 class PerQuestionAttribution(BaseModel):

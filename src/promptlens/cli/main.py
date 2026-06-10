@@ -9,13 +9,14 @@ from typing import Annotated
 
 import typer
 
-from promptlens import AttributionHarness, Segmenter
+from promptlens import Adapter, AttributionHarness, Segmenter
 from promptlens.adapters import EchoAdapter
 from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
 from promptlens.core.base import ToolDefinitions
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
 from promptlens.mutators import LLMRewriteMutator
 from promptlens.optimizers import LLMPromptOptimizer
+from promptlens.reporters import LLMSynopsisWriter
 from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import (
     MarkdownSectionSegmenter,
@@ -193,7 +194,7 @@ def explain(
         typer.Option(
             help=(
                 "Provider type: echo, openai, anthropic, bedrock, copilot, grok, "
-                "gemini, or openai-compatible (with --base-url)."
+                "gemini, ollama (local), or openai-compatible (with --base-url)."
             )
         ),
     ] = "echo",
@@ -204,7 +205,7 @@ def explain(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL for the openai-compatible provider."),
+        typer.Option(help="Base URL for the ollama or openai-compatible providers."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="auto, sentences, paragraphs, sections, or tools.")
@@ -218,7 +219,10 @@ def explain(
     scorer: Annotated[
         str,
         typer.Option(
-            help="length, embedding, embedding-local, logprob, tool-call, or tool-sequence."
+            help=(
+                "length, embedding, embedding-local, logprob, tool-call, "
+                "tool-sequence, or tool-args."
+            )
         ),
     ] = "length",
     scorer_config: Annotated[
@@ -244,6 +248,33 @@ def explain(
             help="Optional LLM prompt rewrites per feature to evaluate as supplementary analysis."
         ),
     ] = 0,
+    synopsis: Annotated[
+        bool,
+        typer.Option(
+            "--synopsis",
+            help=(
+                "After attribution, make one extra LLM call that turns the full "
+                "evidence into a plain-language synopsis."
+            ),
+        ),
+    ] = False,
+    synopsis_provider: Annotated[
+        str | None,
+        typer.Option(
+            help=(
+                "Provider for the synopsis call; defaults to the run provider. "
+                "Point at ollama or openai-compatible to summarize on a local model."
+            )
+        ),
+    ] = None,
+    synopsis_model: Annotated[
+        str | None,
+        typer.Option(help="Model id for the synopsis call."),
+    ] = None,
+    synopsis_base_url: Annotated[
+        str | None,
+        typer.Option(help="Base URL for an ollama/openai-compatible synopsis provider."),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", help="Print the cost estimate and exit without provider calls."),
@@ -294,9 +325,52 @@ def explain(
         exact_tokens=exact_tokens,
     )
     result = harness.explain(prompt_text, tools=tool_definitions)
+    if synopsis:
+        writer = LLMSynopsisWriter(
+            _synopsis_adapter(
+                run_provider=provider,
+                run_model=model,
+                run_base_url=base_url,
+                synopsis_provider=synopsis_provider,
+                synopsis_model=synopsis_model,
+                synopsis_base_url=synopsis_base_url,
+                temperature=temperature,
+            )
+        )
+        result = result.with_synopsis(writer.summarize(prompt_text, result))
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")
     result.print()
+
+
+def _synopsis_adapter(
+    *,
+    run_provider: str,
+    run_model: str | None,
+    run_base_url: str | None,
+    synopsis_provider: str | None,
+    synopsis_model: str | None,
+    synopsis_base_url: str | None,
+    temperature: float,
+) -> Adapter:
+    """Build the adapter for the synopsis call.
+
+    With no synopsis overrides this reuses the attribution run's provider
+    settings. Overriding the provider drops back to that provider's own
+    defaults for model and base URL unless they are overridden too, so
+    ``--synopsis-provider ollama`` alone summarizes on the local default model.
+    """
+    provider = synopsis_provider or run_provider
+    same_provider = provider == run_provider
+    try:
+        return build_adapter(
+            provider=provider,
+            model=synopsis_model or (run_model if same_provider else None),
+            temperature=temperature,
+            base_url=synopsis_base_url or (run_base_url if same_provider else None),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @app.command()
@@ -308,7 +382,7 @@ def optimize(
         typer.Option(
             help=(
                 "Provider type: echo, openai, anthropic, bedrock, copilot, grok, "
-                "gemini, or openai-compatible (with --base-url)."
+                "gemini, ollama (local), or openai-compatible (with --base-url)."
             )
         ),
     ] = "echo",
@@ -319,7 +393,7 @@ def optimize(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL for the openai-compatible provider."),
+        typer.Option(help="Base URL for the ollama or openai-compatible providers."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="auto, sentences, paragraphs, sections, or tools.")
@@ -329,7 +403,10 @@ def optimize(
     scorer: Annotated[
         str,
         typer.Option(
-            help="length, embedding, embedding-local, logprob, tool-call, or tool-sequence."
+            help=(
+                "length, embedding, embedding-local, logprob, tool-call, "
+                "tool-sequence, or tool-args."
+            )
         ),
     ] = "length",
     scorer_config: Annotated[
