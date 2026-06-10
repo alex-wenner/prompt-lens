@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
+from rich.text import Text
 
 from promptlens import AttributionHarness, explain_drilldown
 from promptlens.cli.banner import print_banner
@@ -144,7 +145,7 @@ def run_wizard() -> None:
     if Confirm.ask("\nSave the full result as JSON?", default=False):
         path = Prompt.ask("Output path", default="attribution.json")
         Path(path).write_text(result.to_json(), encoding="utf-8")
-        console.print(f"[green]Saved {path}[/green]")
+        console.print(Text(f"Saved {path}", style="green"))
 
     _print_equivalent_command(
         console,
@@ -259,5 +260,5 @@ def _print_equivalent_command(console: Console, **config: Any) -> None:
     if config["scorer_config"]:
         body += "\n\n# scorer.json\n" + json.dumps(config["scorer_config"], indent=2)
     console.print(
-        Panel(body, title="Run this again without the wizard", border_style="cyan")
+        Panel(Text(body), title="Run this again without the wizard", border_style="cyan")
     )

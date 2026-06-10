@@ -8,10 +8,21 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from promptlens.core.base import Coalition, CompletionOutput, Feature
 
 _MAX_BAR_WIDTH = 20
+
+
+def _plain(text: str) -> Text:
+    """Render model/prompt-derived text literally.
+
+    Dynamic text flows from prompts and model outputs; rendered as a plain
+    string, rich would parse bracketed tokens like ``[blocker]`` or
+    ``[section_2]`` as console markup and silently delete them from tables.
+    """
+    return Text(text)
 
 
 class CostEstimate(BaseModel):
@@ -225,11 +236,11 @@ class AttributionResult(BaseModel):
         for attribution, share in self.ranked():
             bar = "█" * round(share * _MAX_BAR_WIDTH)
             table.add_row(
-                attribution.feature.name,
+                _plain(attribution.feature.name),
                 f"{attribution.value:.4f}",
                 f"{share * 100:.1f}%",
                 bar,
-                attribution.feature.text.replace("\n", " ")[:80],
+                _plain(attribution.feature.text.replace("\n", " ")[:80]),
             )
         Console().print(table)
         highlights = self.drift_highlights()
@@ -240,9 +251,9 @@ class AttributionResult(BaseModel):
             highlight_table.add_column("Output without them")
             for highlight in highlights:
                 highlight_table.add_row(
-                    ", ".join(highlight["removed"]) or "(none)",
+                    _plain(", ".join(highlight["removed"]) or "(none)"),
                     f"{highlight['score']:.4f}",
-                    highlight["output_text"].replace("\n", " ")[:80],
+                    _plain(highlight["output_text"].replace("\n", " ")[:80]),
                 )
             Console().print(highlight_table)
         if self.supplementary_evaluations:
@@ -253,16 +264,18 @@ class AttributionResult(BaseModel):
             supplementary_table.add_column("Prompt")
             for evaluation in self.supplementary_evaluations:
                 supplementary_table.add_row(
-                    evaluation.kind,
-                    evaluation.feature.name if evaluation.feature else "",
+                    _plain(evaluation.kind),
+                    _plain(evaluation.feature.name if evaluation.feature else ""),
                     f"{evaluation.score:.4f}",
-                    evaluation.prompt.replace("\n", " ")[:80],
+                    _plain(evaluation.prompt.replace("\n", " ")[:80]),
                 )
             Console().print(supplementary_table)
         if self.synopsis:
-            synopsis_table = Table(title=f"Synopsis ({self.synopsis.model})", show_lines=True)
+            synopsis_table = Table(
+                title=_plain(f"Synopsis ({self.synopsis.model})"), show_lines=True
+            )
             synopsis_table.add_column("Summary")
-            synopsis_table.add_row(self.synopsis.text)
+            synopsis_table.add_row(_plain(self.synopsis.text))
             Console().print(synopsis_table)
 
 
@@ -311,7 +324,7 @@ class DrilldownResult(BaseModel):
     def print(self) -> None:
         self.overview.print()
         for refinement in self.refinements:
-            table = Table(title=f"Refined: {refinement.feature.name}")
+            table = Table(title=_plain(f"Refined: {refinement.feature.name}"))
             table.add_column("Feature")
             table.add_column("Value", justify="right")
             table.add_column("Share", justify="right")
@@ -320,11 +333,11 @@ class DrilldownResult(BaseModel):
             for attribution, share in refinement.result.ranked():
                 bar = "█" * round(share * _MAX_BAR_WIDTH)
                 table.add_row(
-                    attribution.feature.name,
+                    _plain(attribution.feature.name),
                     f"{attribution.value:.4f}",
                     f"{share * 100:.1f}%",
                     bar,
-                    attribution.feature.text.replace("\n", " ")[:80],
+                    _plain(attribution.feature.text.replace("\n", " ")[:80]),
                 )
             Console().print(table)
         Console().print(
@@ -376,13 +389,15 @@ class PerQuestionAttribution(BaseModel):
         table.add_column("Feature")
         for question in self.questions:
             label = question.replace("\n", " ")
-            table.add_column(label[:40] + ("…" if len(label) > 40 else ""), justify="right")
+            table.add_column(
+                _plain(label[:40] + ("…" if len(label) > 40 else "")), justify="right"
+            )
         matrix = self.share_matrix()
         ordered = sorted(
             matrix.items(), key=lambda item: max(item[1], default=0.0), reverse=True
         )
         for feature_name, shares in ordered:
-            table.add_row(feature_name, *[f"{share * 100:.1f}%" for share in shares])
+            table.add_row(_plain(feature_name), *[f"{share * 100:.1f}%" for share in shares])
         Console().print(table)
 
 
@@ -411,8 +426,8 @@ class OptimizationResult(BaseModel):
         table = Table(title="promptlens Optimization", show_lines=True)
         table.add_column("Field")
         table.add_column("Value")
-        table.add_row("original prompt", self.original_prompt)
-        table.add_row("proposed prompt", self.proposed_prompt)
+        table.add_row("original prompt", _plain(self.original_prompt))
+        table.add_row("proposed prompt", _plain(self.proposed_prompt))
         if self.rationale:
-            table.add_row("rationale", self.rationale)
+            table.add_row("rationale", _plain(self.rationale))
         Console().print(table)
