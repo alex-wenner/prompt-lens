@@ -119,6 +119,7 @@ def build_adapter(
     temperature: float,
     base_url: str | None,
     use_batch_api: bool = False,
+    max_concurrency: int = 1,
     client: Any | None = None,
 ) -> Adapter:
     """Build a provider adapter without exposing credentials.
@@ -126,15 +127,25 @@ def build_adapter(
     ``use_batch_api`` opts OpenAI and Anthropic adapters into their native batch
     APIs (cheaper, asynchronous). It is ignored by providers without batch
     support (echo, bedrock, copilot, grok, gemini, openai-compatible).
+
+    ``max_concurrency`` sets how many concurrent requests the default batch
+    path may issue; it applies to every provider.
     """
+    if max_concurrency < 1:
+        msg = f"max_concurrency must be >= 1, got {max_concurrency}"
+        raise ValueError(msg)
     provider_key = provider.strip().lower()
     provider_key = _PROVIDER_ALIASES.get(provider_key, provider_key)
     if provider_key == "copilot":
-        return _build_copilot_adapter(model, temperature=temperature, client=client)
+        adapter = _build_copilot_adapter(model, temperature=temperature, client=client)
+        adapter.max_concurrency = max_concurrency
+        return adapter
     if provider_key in _SDK_PROVIDERS:
-        return _build_sdk_provider_adapter(
+        adapter = _build_sdk_provider_adapter(
             provider_key, model, temperature=temperature, client=client
         )
+        adapter.max_concurrency = max_concurrency
+        return adapter
     model_id = _resolve_model(provider_key, model)
     if provider_key == "echo":
         return EchoAdapter(model=model_id)
@@ -143,6 +154,7 @@ def build_adapter(
             model=model_id,
             temperature=temperature,
             use_batch_api=use_batch_api,
+            max_concurrency=max_concurrency,
             client=client,
         )
     if provider_key == "anthropic":
@@ -150,10 +162,13 @@ def build_adapter(
             model=model_id,
             temperature=temperature,
             use_batch_api=use_batch_api,
+            max_concurrency=max_concurrency,
             client=client,
         )
     if provider_key == "bedrock":
-        return BedrockAdapter(model=model_id, temperature=temperature, client=client)
+        adapter = BedrockAdapter(model=model_id, temperature=temperature, client=client)
+        adapter.max_concurrency = max_concurrency
+        return adapter
     if provider_key == "openai-compatible":
         endpoint = (
             base_url
@@ -170,12 +185,14 @@ def build_adapter(
                 base_url=endpoint,
                 api_key=api_key,
                 temperature=temperature,
+                max_concurrency=max_concurrency,
                 client=client,
             )
         return OpenAICompatibleAdapter(
             model=model_id,
             base_url=endpoint,
             temperature=temperature,
+            max_concurrency=max_concurrency,
             client=client,
         )
     msg = f"Unsupported provider: {provider}"

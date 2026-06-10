@@ -1,5 +1,9 @@
 # promptlens
 
+[![CI](https://github.com/alex-wenner/prompt-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-wenner/prompt-lens/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+
 `promptlens` is a **prompt observability** toolkit: black-box attribution that shows which parts of a prompt, tool schema, or instruction stack actually moved a model's output. Think of it as feature attribution for prompts and agent debugging — because "the model just vibes" is not an observability strategy.
 
 It is not a prompt optimizer first. It is an **attribution / observability** lens: segment a prompt, mask features, rerun the model, score how much the output changed, and rank what mattered. Prompt optimization is a downstream feature built on top of that evidence, not the headline.
@@ -58,6 +62,22 @@ Or skip the separate step: `--dry-run` prints the estimate and exits, `--confirm
 ```bash
 promptlens explain --prompt ./prompt.md --provider openai --segmenter auto --confirm
 ```
+
+Coalition evaluations are independent, so `--max-concurrency 8` runs them in parallel for a near-linear wall-clock speedup (mind your provider rate limits). Pass `--output report.html` to get a self-contained, shareable HTML report instead of JSON.
+
+## Does it get the right answer?
+
+A fully offline [planted-instruction benchmark](benchmarks/planted_instructions.py) plants known driver sentences among inert filler and checks the ranking recovers them (`python benchmarks/planted_instructions.py`):
+
+| configuration | precision@k | pairwise accuracy |
+|---|---|---|
+| leave-one-out (clean) | 1.000 | 1.000 |
+| leave-one-out (noisy, 1 sample) | 0.600 | 0.750 |
+| leave-one-out (noisy, 5 samples) | 0.633 | 0.756 |
+| random coalitions ×64 (clean) | 1.000 | 1.000 |
+| random coalitions ×64 (noisy) | **1.000** | **1.000** |
+
+The noisy rows are the interesting ones: leave-one-out samples the baseline once, so baseline noise contaminates every measurement, while the random-coalition masked-vs-kept contrast cancels that shared offset and stays at ceiling. If your provider is noisy and repeats don't stabilize rankings, use `--sampler random`.
 
 Run the offline example pipeline with the built-in echo adapter:
 

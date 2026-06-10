@@ -163,6 +163,8 @@ This answers questions a single aggregate run cannot: *which instruction carries
 
 Coalition evaluations are independent, so `Adapter.complete_batch()` defines a batch path the harness always uses. The default implementation calls `complete()` per prompt, but `OpenAIAdapter` and `AnthropicAdapter` accept `use_batch_api=True` to route batches through the provider's native Batch / Message Batches API (roughly 50% cheaper, asynchronous with polling via `poll_interval_seconds`). It is opt-in because batch jobs trade latency for cost; the default behavior is unchanged. From the CLI, pass `--batch-api` on `explain` or `optimize` to enable it for the OpenAI and Anthropic providers.
 
+For synchronous runs, the default batch path can issue requests concurrently: set `max_concurrency` on the adapter (constructor argument on the provider adapters, `--max-concurrency` on the CLI). Evaluations are independent, so wall-clock time drops roughly linearly until provider rate limits bite. Identical prompts are deliberately *not* deduplicated — `samples_per_coalition` re-sends the same prompt on purpose to sample a non-deterministic provider's output distribution.
+
 ### Segmenters
 
 Segmenters define what can receive attribution.
@@ -178,9 +180,11 @@ Choose the segmenter based on the question you are asking. Sentence-level attrib
 
 Maskers rebuild a prompt from the selected coalition of features. The strategy you choose changes what an attribution value *means*, so it is exposed as a first-class option (`--masker` on the CLI, `masker=` on `AttributionHarness`).
 
-- `PlaceholderMasker` (default) replaces masked features with a placeholder such as `[...]`. Prompt structure stays mostly intact, so attribution measures the effect of hiding a feature's content while signalling that something was there.
-- `DropMasker` omits masked features entirely and collapses their separators. Attribution measures the effect of removing a feature outright, with no placeholder hint left behind — useful when the placeholder itself would perturb the model.
-- `FillerMasker` replaces masked features with neutral filler of comparable length. Prompt length and shape stay roughly constant, so attribution isolates a feature's semantic content from length confounds.
+- `PlaceholderMasker` (default) replaces masked features with a placeholder such as `[...]`. Prompt structure stays intact, so attribution measures the effect of hiding a feature's content while signalling that something was there.
+- `DropMasker` omits masked features entirely. Attribution measures the effect of removing a feature outright, with no placeholder hint left behind — useful when the placeholder itself would perturb the model.
+- `FillerMasker` replaces masked features with neutral filler of exactly matching length. Prompt length and shape stay constant, so attribution isolates a feature's semantic content from length confounds.
+
+When the harness runs a masker it passes the original prompt along, and maskers **splice** masks into it using each feature's character span — every separator, blank line, and heading the segmenter didn't capture survives verbatim, so the only difference between the baseline prompt and a masked prompt is the masked content itself. The join-on-separator path remains as a fallback for features without usable spans (such as the appended tools feature, or custom segmenters that don't record offsets).
 
 There is no universally correct masker: dropping a sentence, replacing it with `[...]`, and replacing it with neutral filler all produce different coalitions and therefore different attribution values. Pick the one whose counterfactual matches the question you are asking.
 
@@ -282,6 +286,12 @@ promptlens explain \
   --output attribution.json
 ```
 
+Use an `.html` output path to get a self-contained, shareable report instead of JSON — feature bars, shares, baseline output, and (for `explain_per_question` via `PerQuestionAttribution.to_html()`) a feature × question heatmap:
+
+```bash
+promptlens explain --prompt ./prompt.md --provider openai --output report.html
+```
+
 Add supplementary LLM rewrite checks when you want to inspect sensitivity to paraphrases or richer prompt mutations:
 
 ```bash
@@ -379,7 +389,8 @@ The library does not collect telemetry, prompts, outputs, PII, API keys, or secr
 ## Current limitations
 
 - Leave-one-out attribution can miss interactions where two features only matter together; `RandomCoalitionSampler` approximates interaction effects but needs more samples.
-- Maskers rebuild the prompt by joining feature texts with a single separator (a space by default), while the baseline run uses the original prompt verbatim. For paragraph or section segmentation this flattens blank lines and headings into spaces, which adds a small formatting drift shared by every coalition. It mostly cancels in rankings (and is subtracted outright by the random-coalition contrast estimator), but you can reduce it at the source by matching the separator to the segmenter, e.g. `PlaceholderMasker(separator="\n\n")` with `ParagraphSegmenter`.
+- Maskers splice masks into the original prompt using feature spans, so formatting survives masking; only features without spans (e.g. the appended tools feature) fall back to separator joining.
+- The baseline output is sampled **once** per run. With a noisy provider that single draw contaminates every leave-one-out measurement (repeats average the candidates, not the baseline) — the planted-instruction benchmark quantifies this. The random-coalition contrast estimator cancels the shared baseline offset, so prefer `--sampler random` for noisy providers.
 - Cost grows with feature count, repeat count, samples per coalition, and random coalition count.
 - Scores are only as meaningful as the selected scorer, and drift vs. objective orientation must match your question.
 - Provider adapters are intentionally minimal: they flatten prompts into a single user message and may not expose every provider option or native multi-turn / system-message structure.

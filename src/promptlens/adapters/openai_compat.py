@@ -29,12 +29,17 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
         api_key: str = "not-needed",
         temperature: float = 0.0,
         logprobs: bool = False,
+        max_concurrency: int = 1,
         client: Any | None = None,
     ) -> None:
         if client is None:
             client = _compatible_client(base_url=base_url, api_key=api_key)
         super().__init__(
-            model=model, temperature=temperature, logprobs=logprobs, client=client
+            model=model,
+            temperature=temperature,
+            logprobs=logprobs,
+            max_concurrency=max_concurrency,
+            client=client,
         )
         self.base_url = base_url
 

@@ -29,3 +29,4 @@ jobs:
       - run: ruff check .
       - run: mypy src/promptlens
       - run: pytest
+      - run: python benchmarks/planted_instructions.py

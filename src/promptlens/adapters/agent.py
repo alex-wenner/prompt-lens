@@ -48,10 +48,23 @@ class AgentAdapter(Adapter):
     arithmetic assumes a single completion per evaluation. Budget accordingly.
     """
 
-    def __init__(self, run_agent: AgentRunner, task: str, *, model: str = "agent") -> None:
+    def __init__(
+        self,
+        run_agent: AgentRunner,
+        task: str,
+        *,
+        model: str = "agent",
+        max_concurrency: int = 1,
+    ) -> None:
+        if max_concurrency < 1:
+            msg = f"max_concurrency must be >= 1, got {max_concurrency}"
+            raise ValueError(msg)
         self.run_agent = run_agent
         self.task = task
         self.model = model
+        # Raise above 1 only when run_agent is thread-safe: each batch worker
+        # invokes it concurrently.
+        self.max_concurrency = max_concurrency
 
     def complete(self, prompt: str, tools: ToolDefinitions | None = None) -> CompletionOutput:
         output = self.run_agent(prompt, self.task, tools)

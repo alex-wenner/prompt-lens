@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -58,6 +59,12 @@ class Adapter(ABC):
     """Thin provider wrapper for a model completion API."""
 
     model: str
+    #: Maximum concurrent ``complete`` calls the default batch path may issue.
+    #: ``1`` keeps the historical serial behavior; provider adapters accept a
+    #: ``max_concurrency`` constructor argument to raise it. Coalition
+    #: evaluations are independent, so wall-clock time drops roughly linearly
+    #: until the provider's rate limit becomes the bottleneck.
+    max_concurrency: int = 1
 
     @abstractmethod
     def complete(self, prompt: str, tools: ToolDefinitions | None = None) -> CompletionOutput:
@@ -66,8 +73,18 @@ class Adapter(ABC):
     def complete_batch(
         self, prompts: Sequence[str], tools: ToolDefinitions | None = None
     ) -> list[CompletionOutput]:
-        """Default batch path; provider adapters may override with native batching."""
-        return [self.complete(prompt, tools=tools) for prompt in prompts]
+        """Default batch path; provider adapters may override with native batching.
+
+        Runs requests through a thread pool when :attr:`max_concurrency` is
+        above one, preserving prompt order. Identical prompts are deliberately
+        **not** deduplicated: ``samples_per_coalition`` re-sends the same prompt
+        on purpose to sample a non-deterministic provider's output distribution.
+        """
+        workers = min(self.max_concurrency, len(prompts))
+        if workers <= 1:
+            return [self.complete(prompt, tools=tools) for prompt in prompts]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(lambda prompt: self.complete(prompt, tools=tools), prompts))
 
 
 class Segmenter(ABC):
@@ -82,8 +99,20 @@ class Masker(ABC):
     """Reconstructs prompts from a coalition mask."""
 
     @abstractmethod
-    def mask(self, features: Sequence[Feature], coalition: Coalition) -> str:
-        """Return a prompt where features with coalition=False are masked."""
+    def mask(
+        self,
+        features: Sequence[Feature],
+        coalition: Coalition,
+        prompt: str | None = None,
+    ) -> str:
+        """Return a prompt where features with coalition=False are masked.
+
+        When ``prompt`` (the original text the features were segmented from) is
+        supplied and the features carry valid character spans, maskers should
+        splice masks into the original text — preserving every separator,
+        blank line, and heading the segmenter did not capture — instead of
+        re-joining feature texts. Without ``prompt`` the join path is used.
+        """
 
 
 class Scorer(ABC):

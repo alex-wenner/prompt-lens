@@ -84,7 +84,7 @@ class AttributionHarness:
         """
         features = self.segmenter.segment(prompt, tools=tools)
         masked_prompts = [
-            self.masker.mask(features, coalition)
+            self.masker.mask(features, coalition, prompt=prompt)
             for coalition in self.sampler.sample(len(features))
         ]
         evaluations = len(masked_prompts) * self.samples_per_coalition
@@ -112,7 +112,9 @@ class AttributionHarness:
         baseline = self.adapter.complete(prompt, tools=tools)
         coalitions = list(self.sampler.sample(len(features)))
         samples = self.samples_per_coalition
-        masked_prompts = [self.masker.mask(features, coalition) for coalition in coalitions]
+        masked_prompts = [
+            self.masker.mask(features, coalition, prompt=prompt) for coalition in coalitions
+        ]
         # Objective (task-quality) scorers ignore the baseline and return higher
         # values when the candidate did the desired thing. To turn that into an
         # attribution signal we measure how far the objective drops when a feature

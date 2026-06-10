@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -116,6 +116,7 @@ def _harness(
     masker_name: str = "placeholder",
     samples_per_coalition: int = 1,
     use_batch_api: bool = False,
+    max_concurrency: int = 1,
     with_optimizer: bool = False,
 ) -> AttributionHarness:
     try:
@@ -125,6 +126,7 @@ def _harness(
             temperature=temperature,
             base_url=base_url,
             use_batch_api=use_batch_api,
+            max_concurrency=max_concurrency,
         )
         sampler = build_sampler(sampler_name, scale=scale)
         scorer = build_scorer(scorer_name, config_path=scorer_config)
@@ -154,6 +156,14 @@ def _harness(
         perturbation_scale=_parse_scale(scale),
         samples_per_coalition=samples_per_coalition,
     )
+
+
+def _write_output(path: str, result: Any) -> None:
+    """Write a result file: HTML report for .html paths, JSON otherwise."""
+    if path.lower().endswith((".html", ".htm")):
+        Path(path).write_text(result.to_html(), encoding="utf-8")
+    else:
+        Path(path).write_text(result.to_json(), encoding="utf-8")
 
 
 def _parse_scale(scale: str | int) -> str | int:
@@ -187,7 +197,10 @@ def estimate(
 @app.command()
 def explain(
     prompt: Annotated[str, typer.Option(help="Prompt text or path to a prompt file.")],
-    output: Annotated[str | None, typer.Option(help="Optional JSON output path.")] = None,
+    output: Annotated[
+        str | None,
+        typer.Option(help="Output path: .html for a shareable report, JSON otherwise."),
+    ] = None,
     provider: Annotated[
         str,
         typer.Option(
@@ -244,6 +257,15 @@ def explain(
             help="Optional LLM prompt rewrites per feature to evaluate as supplementary analysis."
         ),
     ] = 0,
+    max_concurrency: Annotated[
+        int,
+        typer.Option(
+            help=(
+                "Concurrent provider requests for coalition evaluations. "
+                "Raise for faster runs; mind your provider rate limits."
+            )
+        ),
+    ] = 1,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", help="Print the cost estimate and exit without provider calls."),
@@ -284,6 +306,7 @@ def explain(
         masker_name=masker,
         samples_per_coalition=samples_per_coalition,
         use_batch_api=batch_api,
+        max_concurrency=max_concurrency,
     )
     _cost_gate(
         harness,
@@ -295,14 +318,17 @@ def explain(
     )
     result = harness.explain(prompt_text, tools=tool_definitions)
     if output:
-        Path(output).write_text(result.to_json(), encoding="utf-8")
+        _write_output(output, result)
     result.print()
 
 
 @app.command()
 def optimize(
     prompt: Annotated[str, typer.Option(help="Prompt text or path to a prompt file.")],
-    output: Annotated[str | None, typer.Option(help="Optional JSON output path.")] = None,
+    output: Annotated[
+        str | None,
+        typer.Option(help="Output path: .html for a shareable report, JSON otherwise."),
+    ] = None,
     provider: Annotated[
         str,
         typer.Option(
@@ -343,6 +369,15 @@ def optimize(
             help="Use the provider native batch API (openai, anthropic) for cheaper async runs."
         ),
     ] = False,
+    max_concurrency: Annotated[
+        int,
+        typer.Option(
+            help=(
+                "Concurrent provider requests for coalition evaluations. "
+                "Raise for faster runs; mind your provider rate limits."
+            )
+        ),
+    ] = 1,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", help="Print the cost estimate and exit without provider calls."),
@@ -385,6 +420,7 @@ def optimize(
         scorer_config=scorer_config,
         supplementary_rewrites=0,
         use_batch_api=batch_api,
+        max_concurrency=max_concurrency,
         with_optimizer=True,
     )
     _cost_gate(
@@ -397,7 +433,7 @@ def optimize(
     )
     result = harness.optimize(prompt_text, tools=tool_definitions)
     if output:
-        Path(output).write_text(result.to_json(), encoding="utf-8")
+        _write_output(output, result)
     result.print()
 
 

@@ -29,9 +29,13 @@ class AnthropicAdapter(Adapter):
         client: Any | None = None,
         use_batch_api: bool = False,
         poll_interval_seconds: float = 5.0,
+        max_concurrency: int = 1,
     ) -> None:
         if poll_interval_seconds <= 0:
             msg = f"poll_interval_seconds must be > 0, got {poll_interval_seconds}"
+            raise ValueError(msg)
+        if max_concurrency < 1:
+            msg = f"max_concurrency must be >= 1, got {max_concurrency}"
             raise ValueError(msg)
         self.model = model
         self.temperature = temperature
@@ -39,6 +43,7 @@ class AnthropicAdapter(Adapter):
         self._client = client
         self.use_batch_api = use_batch_api
         self.poll_interval_seconds = poll_interval_seconds
+        self.max_concurrency = max_concurrency
 
     def _request_params(self, prompt: str, tools: ToolDefinitions | None) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
