@@ -118,6 +118,6 @@ For a deeper explanation of the attribution workflow, components, provider adapt
 ## Disclaimers
 
 - Functionality like this may get swallowed into provider frameworks. At least I sure hope.
-- Please commit to this! Many, many, many of you are way smarter than I am.
-- Totally open sourced. Do whatever you want, when you take this and monetize it and become a millionaire... just think of me someday.
-- No PII of any kind, API keys, etc. are collected. Ever.
+- Please commit to this! Many of you are way smarter than I am. 
+- Totally open sourced. Do whatever you want. 
+- No PII of any kind, API keys, etc. are collected.
