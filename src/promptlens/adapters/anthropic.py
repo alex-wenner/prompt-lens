@@ -6,6 +6,7 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
+from promptlens.adapters.models import supports_temperature
 from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
 
 
@@ -15,6 +16,9 @@ class AnthropicAdapter(Adapter):
     Set ``use_batch_api=True`` to route :meth:`complete_batch` through the
     Anthropic Message Batches API (50% cheaper, asynchronous with polling).
     The synchronous :meth:`complete` path is unchanged.
+
+    ``temperature`` is omitted from requests for models that removed sampling
+    parameters (Claude Opus 4.7 and later), where sending it returns a 400.
     """
 
     def __init__(
@@ -40,9 +44,10 @@ class AnthropicAdapter(Adapter):
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
             "messages": [{"role": "user", "content": prompt}],
         }
+        if supports_temperature(self.model):
+            kwargs["temperature"] = self.temperature
         if tools:
             kwargs["tools"] = coerce_tools(tools, "anthropic")
         return kwargs
@@ -51,6 +56,22 @@ class AnthropicAdapter(Adapter):
         client = self._client or _default_client()
         response = client.messages.create(**self._request_params(prompt, tools))
         return _message_to_output(response)
+
+    def count_tokens(self, prompt: str, tools: ToolDefinitions | None = None) -> int:
+        """Count input tokens exactly via the Messages API count_tokens endpoint.
+
+        This is a free metering call — it runs no inference and bills no tokens —
+        but it does hit the network, so the harness only uses it when an exact
+        estimate is explicitly requested.
+        """
+        client = self._client or _default_client()
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if tools:
+            kwargs["tools"] = coerce_tools(tools, "anthropic")
+        return int(client.messages.count_tokens(**kwargs).input_tokens)
 
     def complete_batch(
         self, prompts: Sequence[str], tools: ToolDefinitions | None = None

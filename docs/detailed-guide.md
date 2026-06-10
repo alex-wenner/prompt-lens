@@ -88,6 +88,79 @@ Only some models return token log probabilities. The OpenAI GPT-5 reasoning fami
 
 Provider adapters are intentionally thin. They should make it easy to swap providers while keeping the attribution logic stable.
 
+#### Attributing whole agent runs
+
+The harness never inspects what an adapter does to produce its output, so the unit under attribution does not have to be a single completion — it can be an **entire agent loop** with multiple model turns and tool executions. `AgentAdapter` makes that explicit:
+
+- The *prompt* the harness segments and masks is the agent's **system prompt**.
+- The **task** (the user question or questions) is held fixed across every coalition.
+- Each evaluation answers: *how does the agent's trajectory change when this piece of its instructions is hidden?*
+
+You supply one callable, `run_agent(system_prompt, task, tools)`, which must execute a **fresh, stateless** agent run (build the agent from scratch each call so coalitions never share conversation memory) and return a `CompletionOutput` whose `text` is the final answer and whose `tool_calls` lists every tool invocation in order. `messages_to_output` builds that from a Bedrock Converse-style message history — the format Strands Agents exposes as `agent.messages` — so a Strands integration looks like:
+
+```python
+from promptlens import AttributionHarness
+from promptlens.adapters import AgentAdapter, messages_to_output
+from promptlens.scorers import CompositeScorer, EmbeddingScorer, ToolSequenceDriftScorer
+from promptlens.segmenters import ParagraphSegmenter
+
+def run_strands(system_prompt: str, task: str, tools) -> "CompletionOutput":
+    from strands import Agent  # illustrative; any agent runtime works
+    agent = Agent(system_prompt=system_prompt, tools=[...])  # fresh agent per run
+    agent(task)
+    return messages_to_output(agent.messages)
+
+harness = AttributionHarness(
+    adapter=AgentAdapter(run_strands, task="What is our refund policy?"),
+    segmenter=ParagraphSegmenter(),
+    scorer=ToolSequenceDriftScorer(),  # did the agent's tool path change?
+)
+result = harness.explain(SYSTEM_PROMPT)
+```
+
+Score trajectories with `ToolSequenceDriftScorer` (normalized edit distance between the baseline and candidate tool-call sequences), a text scorer over the final answer, an objective scorer such as `ToolAccuracyScorer`, or a weighted combination via `CompositeScorer` — e.g. `0.6` tool-sequence drift plus `0.4` final-answer embedding drift.
+
+Two caveats specific to agent runs:
+
+- **Cost**: each evaluation is a full agent run — one provider call *per agent step*, not one per coalition — and trajectories can lengthen when instructions are masked. `estimate()` assumes a single completion per evaluation, so treat it as a floor and prefer coarse segmenters (paragraphs or sections) for agent attribution.
+- **Variance**: agent loops compound non-determinism across steps. Use `perturbation_scale="standard"` or `samples_per_coalition > 1` so the per-feature standard errors tell you whether a ranking is stable.
+
+##### Why trajectories are compared whole, not turn-by-turn
+
+A tempting finer-grained design is to compare baseline turn *i* against candidate turn *i* and treat each mismatch as its own attribution signal. promptlens deliberately does **not** do this, for three reasons:
+
+1. **Turns stop being comparable after the first divergence.** Once the masked agent does something different at step *k* — calls a different tool, gets a different result — every later turn is conditioned on a different history. Candidate turn *k+2* is not a noisy re-measurement of baseline turn *k+2*; it is a turn from a different conversation. Counting each post-divergence mismatch as independent evidence double-counts a single upstream change, and systematically over-credits features that happen to diverge *early* over features that matter *most*.
+2. **Index pairing isn't even well defined.** Masked instructions routinely shorten or lengthen the loop, so there is no guaranteed correspondence between baseline turn *i* and candidate turn *i*.
+3. **Finer grain doesn't tame stochasticity — it amplifies it.** Sampling randomness compounds across an agent loop, so each per-turn comparison is a *noisier* measurement than the trajectory-level one, and there are more of them. The statistical remedy for probabilistic outputs is repeats (`samples_per_coalition`, `perturbation_scale`) feeding the per-feature standard errors, not finer slicing.
+
+Note that `ToolSequenceDriftScorer` already compares turns in the one way that *is* sound: the edit distance computes an optimal **alignment** between the two tool paths — allowing insertions, deletions, and substitutions — and charges one unit per mismatch. "Same five steps but the verify call was skipped" scores 1/5, rather than "everything after step 2 differs". The raw trajectories are kept on each `CoalitionEvaluation` (via `output.raw`), so when a feature ranks high you can inspect *where* the paths first split as a debugging follow-up.
+
+##### Per-question attribution
+
+There is one finer "turn" axis that is statistically well-posed: the **user questions**. Unlike model-generated turns, questions are fixed inputs, so answer *i* corresponds to question *i* in every coalition by construction — no alignment problem, no divergence cascade. `explain_per_question` exploits this to produce a feature × question view:
+
+```python
+from promptlens.adapters import AgentAdapter, explain_per_question
+
+harness = AttributionHarness(
+    adapter=AgentAdapter(run_strands, task="placeholder"),
+    segmenter=ParagraphSegmenter(),
+    scorer=ToolSequenceDriftScorer(),
+)
+per_question = explain_per_question(
+    harness,
+    SYSTEM_PROMPT,
+    questions=[
+        "What is the refund policy?",
+        "What is the total of 2 and 3?",
+    ],
+)
+per_question.print()        # feature rows × question columns, shares per cell
+per_question.share_matrix() # {"paragraph_1": [0.9, 0.0], ...}
+```
+
+This answers questions a single aggregate run cannot: *which instruction carries which kind of question* — e.g. a paragraph that dominates refund questions but is dead weight for arithmetic. Each question runs as its own independent agent run per coalition, so cost scales with the number of questions; `per_question.results` holds a full `AttributionResult` per question, including per-question cost estimates. Conversation-dependent behavior (where an answer should depend on earlier questions) belongs inside your `run_agent` callable — fold the prior turns into the task string you build there.
+
 Coalition evaluations are independent, so `Adapter.complete_batch()` defines a batch path the harness always uses. The default implementation calls `complete()` per prompt, but `OpenAIAdapter` and `AnthropicAdapter` accept `use_batch_api=True` to route batches through the provider's native Batch / Message Batches API (roughly 50% cheaper, asynchronous with polling via `poll_interval_seconds`). It is opt-in because batch jobs trade latency for cost; the default behavior is unchanged. From the CLI, pass `--batch-api` on `explain` or `optimize` to enable it for the OpenAI and Anthropic providers.
 
 ### Segmenters
@@ -125,6 +198,7 @@ Scorers convert output differences into numeric signals.
 - `EmbeddingScorer` measures semantic drift with an embedding client. On the CLI the `embedding` scorer is provider-backed: pass a scorer config naming a provider, e.g. `{"provider": "openai", "model": "text-embedding-3-small"}`. For fully offline smoke runs use the `embedding-local` scorer, a deterministic text-shape fallback that is **not** semantic and should never be used for real attribution.
 - `LogprobScorer` compares average token log probabilities when the adapter provides them. Use it only with models that return logprobs (e.g. OpenAI `gpt-4o`/`gpt-4.1`); GPT-5 reasoning models and Anthropic models do not expose them.
 - `ToolAccuracyScorer` checks whether a completion selected an expected tool and required arguments.
+- `ToolSequenceDriftScorer` (`tool-sequence` on the CLI) measures the normalized edit distance between the baseline and candidate tool-call sequences — tool-choice drift for single completions, tool-*path* drift for `AgentAdapter` runs.
 - `CompositeScorer` combines several scorers as a weighted sum, e.g. `0.7` embedding drift plus `0.3` length drift, when "what changed" is best captured by more than one signal.
 
 The right scorer depends on what "changed" means for your task. For factual answer quality, semantic distance may be useful. For tool routing, tool accuracy is usually more direct.
@@ -151,7 +225,12 @@ The built-in leave-one-out sampler evaluates each feature by masking it independ
 
 Repeats are helpful when using non-deterministic providers. More repeats can produce standard errors, but they also increase cost. Math remains undefeated.
 
-`RandomCoalitionSampler` (`--sampler random` on the CLI) masks several features at once: each coalition independently includes every feature with probability `0.5`. Because the drift attributed to a feature is then averaged over many partially-masked contexts rather than the single full-prompt context leave-one-out uses, the random sampler is sensitive to interactions a pure leave-one-out sweep misses. It is an approximation, so it needs enough coalitions to stabilize (the CLI scales the coalition count with `--scale`) and supports a `seed` for reproducibility.
+`RandomCoalitionSampler` (`--sampler random` on the CLI) masks several features at once: each coalition independently includes every feature with probability `0.5`. Because a feature's effect is then observed across many partially-masked contexts rather than the single full-prompt context leave-one-out uses, the random sampler is sensitive to interactions a pure leave-one-out sweep misses. It is an approximation, so it needs enough coalitions to stabilize (the CLI scales the coalition count with `--scale`) and supports a `seed` for reproducibility.
+
+The estimator differs between the two samplers, and the difference matters:
+
+- With **leave-one-out**, every coalition masks exactly one feature, so the mean drift over a feature's masked coalitions *is* its marginal effect relative to the full prompt. The harness uses that mean directly.
+- With **random coalitions**, several features are masked together, so the mean drift over coalitions containing a feature confounds that feature's own effect with the average effect of whatever was co-masked — an inert feature would inherit roughly half the drift of the real drivers. The harness therefore attributes the **masked-vs-kept contrast**: `mean(score | feature masked) − mean(score | feature kept)`. At inclusion probability `0.5` this is a Monte-Carlo estimate of the feature's Banzhaf value, and the shared co-masking offset cancels. One side effect: because the sampler skips the degenerate all-masked and all-kept coalitions, inert features tend to land slightly *below* zero rather than exactly at zero — a conservative direction, since the share normalization only distributes positive attribution mass.
 
 For distributional attribution you can also keep a single leave-one-out sweep but evaluate each coalition multiple times with `samples_per_coalition` (`--samples-per-coalition` on the CLI). At temperature > 0 this turns each coalition into a small distribution: per-coalition scores are averaged, every sample feeds the feature's standard error, and the cost estimator multiplies its evaluation count so the spend preview stays honest.
 
@@ -170,6 +249,18 @@ promptlens estimate \
 ```
 
 The estimate includes baseline plus masked evaluations. If a prompt has five features and the sampler runs one leave-one-out sweep, expect six total model calls: one baseline call and five masked calls.
+
+Segmentation and masking run offline, so input tokens are counted per **actual masked prompt** rather than assuming every call resends the full prompt — with `--masker drop` the estimate shrinks accordingly. Token counting uses `tiktoken` when it is installed (via the `openai` extra) and the model is an OpenAI-family model; everything else uses a conservative character heuristic. Claude deliberately stays on the heuristic by default even when `tiktoken` is available, because `tiktoken` is OpenAI's tokenizer and undercounts Claude tokens by 15–20%.
+
+For **exact** Claude counts, pass `--exact-tokens` (SDK: `harness.estimate(prompt, exact_tokens=True)`). This counts every prompt — baseline and each masked perturbation — through Anthropic's `count_tokens` metering endpoint, which is free and runs no inference, but does need credentials and network access; that is why it is opt-in rather than the default for a "no provider calls" dry run. Adapters without an exact counter fall back silently to the local counters. The estimate table reports which counter produced the numbers (`heuristic`, `tiktoken`, or `provider`).
+
+You don't have to run `estimate` separately: `explain` and `optimize` accept `--dry-run` (print the estimate and exit without provider calls) and `--confirm` (print the estimate, then ask before spending). Combined with `--segmenter auto` — which picks sections for markdown with headings, paragraphs for text with blank lines, and sentences otherwise — the low-decision path is:
+
+```bash
+promptlens explain --prompt ./prompt.md --provider openai --segmenter auto --confirm
+```
+
+Note the estimate covers attribution calls only: supplementary rewrites and the optimizer's final rewrite call add adapter calls on top, and for `AgentAdapter` runs each evaluation is a whole agent loop rather than one completion.
 
 Compare model pricing entries with `--compare`:
 
@@ -288,6 +379,7 @@ The library does not collect telemetry, prompts, outputs, PII, API keys, or secr
 ## Current limitations
 
 - Leave-one-out attribution can miss interactions where two features only matter together; `RandomCoalitionSampler` approximates interaction effects but needs more samples.
+- Maskers rebuild the prompt by joining feature texts with a single separator (a space by default), while the baseline run uses the original prompt verbatim. For paragraph or section segmentation this flattens blank lines and headings into spaces, which adds a small formatting drift shared by every coalition. It mostly cancels in rankings (and is subtracted outright by the random-coalition contrast estimator), but you can reduce it at the source by matching the separator to the segmenter, e.g. `PlaceholderMasker(separator="\n\n")` with `ParagraphSegmenter`.
 - Cost grows with feature count, repeat count, samples per coalition, and random coalition count.
 - Scores are only as meaningful as the selected scorer, and drift vs. objective orientation must match your question.
 - Provider adapters are intentionally minimal: they flatten prompts into a single user message and may not expose every provider option or native multi-turn / system-message structure.

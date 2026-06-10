@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Callable
 
 from promptlens.core.base import (
     Adapter,
@@ -66,10 +67,35 @@ class AttributionHarness:
         prompt: str,
         tools: ToolDefinitions | None = None,
         compare_models: list[str] | None = None,
+        exact_tokens: bool = False,
     ) -> CostEstimate:
+        """Preview attribution cost without making inference calls.
+
+        Segmentation and masking run offline, so input tokens are counted per
+        actual masked prompt rather than assuming every call resends the full
+        prompt. Supplementary rewrites and the optimizer's rewrite call are not
+        included; they add adapter calls on top of this estimate.
+
+        ``exact_tokens=True`` uses the adapter's exact token counter when it has
+        one (``AnthropicAdapter`` exposes the provider's free ``count_tokens``
+        metering endpoint). That makes one free network call per prompt counted
+        — no inference, no token charges — and falls back silently to the local
+        counters for adapters without exact counting.
+        """
         features = self.segmenter.segment(prompt, tools=tools)
-        evaluations = self.sampler.estimate_evaluations(len(features))
-        evaluations *= self.samples_per_coalition
+        masked_prompts = [
+            self.masker.mask(features, coalition)
+            for coalition in self.sampler.sample(len(features))
+        ]
+        evaluations = len(masked_prompts) * self.samples_per_coalition
+        token_count_fn: Callable[[str], int] | None = None
+        adapter_counter = getattr(self.adapter, "count_tokens", None)
+        if exact_tokens and callable(adapter_counter):
+
+            def _exact_count(text: str) -> int:
+                return int(adapter_counter(text, tools=tools))
+
+            token_count_fn = _exact_count
         return estimate_cost(
             model=self.adapter.model,
             prompt=prompt,
@@ -77,6 +103,8 @@ class AttributionHarness:
             evaluations=evaluations,
             expected_output_tokens=self.expected_output_tokens,
             compare_models=compare_models,
+            evaluation_prompts=masked_prompts,
+            token_count_fn=token_count_fn,
         )
 
     def explain(self, prompt: str, tools: ToolDefinitions | None = None) -> AttributionResult:
@@ -108,7 +136,8 @@ class AttributionHarness:
             raise ValueError(msg)
         evaluations: list[CoalitionEvaluation] = []
         attributions: list[FeatureAttribution] = []
-        feature_scores: dict[int, list[float]] = {index: [] for index in range(len(features))}
+        masked_scores: dict[int, list[float]] = {index: [] for index in range(len(features))}
+        kept_scores: dict[int, list[float]] = {index: [] for index in range(len(features))}
         for c_index, (coalition, masked_prompt) in enumerate(
             zip(coalitions, masked_prompts, strict=True)
         ):
@@ -132,14 +161,28 @@ class AttributionHarness:
                 )
             )
             for index, included in enumerate(coalition):
-                if not included:
-                    feature_scores[index].extend(signal_samples)
+                (kept_scores if included else masked_scores)[index].extend(signal_samples)
+        # When every coalition masks exactly one feature (leave-one-out), the mean
+        # score over a feature's masked coalitions is its exact marginal effect.
+        # When coalitions mask several features at once (random coalitions), that
+        # mean confounds the feature's own effect with the average effect of
+        # whatever was co-masked, biasing every attribution toward the overall
+        # mean drift. The masked-vs-kept contrast removes that shared offset; at
+        # inclusion probability 0.5 it is a Monte-Carlo Banzhaf-value estimate.
+        contrast = any(coalition.count(False) > 1 for coalition in coalitions)
         for index, feature in enumerate(features):
-            scores = feature_scores[index]
-            value = sum(scores) / len(scores) if scores else 0.0
-            stderr = None
-            if len(scores) > 1:
-                stderr = statistics.stdev(scores) / math.sqrt(len(scores))
+            masked = masked_scores[index]
+            kept = kept_scores[index]
+            if not masked:
+                value, stderr = 0.0, None
+            elif contrast and kept:
+                value = _mean(masked) - _mean(kept)
+                stderr = _difference_stderr(masked, kept)
+            else:
+                value = _mean(masked)
+                stderr = None
+                if len(masked) > 1:
+                    stderr = statistics.stdev(masked) / math.sqrt(len(masked))
             attributions.append(FeatureAttribution(feature=feature, value=value, stderr=stderr))
         supplementary_evaluations = self._run_supplementary_mutations(
             prompt=prompt,
@@ -207,6 +250,22 @@ class AttributionHarness:
             )
             for mutation, output in zip(mutations, outputs, strict=True)
         ]
+
+
+def _mean(scores: list[float]) -> float:
+    return sum(scores) / len(scores)
+
+
+def _difference_stderr(masked: list[float], kept: list[float]) -> float | None:
+    """Standard error of mean(masked) - mean(kept) from per-side sample variances."""
+    terms = [
+        statistics.variance(scores) / len(scores)
+        for scores in (masked, kept)
+        if len(scores) > 1
+    ]
+    if not terms:
+        return None
+    return math.sqrt(sum(terms))
 
 
 def _sampler_from_scale(scale: str | int) -> Sampler:

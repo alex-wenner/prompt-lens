@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Annotated
 
@@ -46,7 +47,9 @@ def _read_tools(path: str | None) -> ToolDefinitions | None:
     return tools
 
 
-def _segmenter(name: str) -> Segmenter:
+def _segmenter(name: str, prompt: str = "") -> Segmenter:
+    if name == "auto":
+        return _auto_segmenter(prompt)
     if name == "sentences":
         return SentenceSegmenter()
     if name == "paragraphs":
@@ -59,15 +62,42 @@ def _segmenter(name: str) -> Segmenter:
     raise typer.BadParameter(msg)
 
 
+def _auto_segmenter(prompt: str) -> Segmenter:
+    """Pick a segmenter from the prompt's shape: headings, blank lines, sentences."""
+    if re.search(r"(?m)^#{1,6}\s+", prompt):
+        return MarkdownSectionSegmenter()
+    if "\n\n" in prompt:
+        return ParagraphSegmenter()
+    return SentenceSegmenter()
+
+
 def _offline_harness(
-    model: str, segmenter_name: str, scale: str | int = "quick"
+    model: str, segmenter_name: str, scale: str | int = "quick", prompt_text: str = ""
 ) -> AttributionHarness:
     return AttributionHarness(
         adapter=EchoAdapter(model=model),
-        segmenter=_segmenter(segmenter_name),
+        segmenter=_segmenter(segmenter_name, prompt_text),
         scorer=LengthDriftScorer(),
         perturbation_scale=_parse_scale(scale),
     )
+
+
+def _cost_gate(
+    harness: AttributionHarness,
+    prompt_text: str,
+    tools: ToolDefinitions | None,
+    *,
+    dry_run: bool,
+    confirm: bool,
+    exact_tokens: bool = False,
+) -> None:
+    """Print the cost estimate and stop (dry run) or ask before inference calls."""
+    if not dry_run and not confirm:
+        return
+    harness.estimate(prompt_text, tools=tools, exact_tokens=exact_tokens).print()
+    if dry_run:
+        raise typer.Exit()
+    typer.confirm("Run attribution with these provider calls?", abort=True)
 
 
 def _harness(
@@ -75,6 +105,7 @@ def _harness(
     provider: str,
     model: str | None,
     segmenter_name: str,
+    prompt_text: str,
     scale: str | int,
     temperature: float,
     base_url: str | None,
@@ -114,7 +145,7 @@ def _harness(
         raise typer.BadParameter(str(exc)) from exc
     return AttributionHarness(
         adapter=adapter,
-        segmenter=_segmenter(segmenter_name),
+        segmenter=_segmenter(segmenter_name, prompt_text),
         scorer=scorer,
         sampler=sampler,
         masker=masker,
@@ -136,7 +167,7 @@ def estimate(
     prompt: Annotated[str, typer.Option(help="Prompt text or path to a prompt file.")],
     model: Annotated[str, typer.Option(help="Provider/model name.")] = "openai/gpt-4o-mini",
     segmenter: Annotated[
-        str, typer.Option(help="sentences, paragraphs, sections, or tools.")
+        str, typer.Option(help="auto, sentences, paragraphs, sections, or tools.")
     ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
     compare: Annotated[
@@ -146,7 +177,9 @@ def estimate(
 ) -> None:
     """Preview attribution cost without provider calls."""
     prompt_text = _read_prompt(prompt)
-    harness = _offline_harness(model=model, segmenter_name=segmenter, scale=scale)
+    harness = _offline_harness(
+        model=model, segmenter_name=segmenter, scale=scale, prompt_text=prompt_text
+    )
     compare_models = [item.strip() for item in compare.split(",")] if compare else None
     harness.estimate(prompt_text, tools=_read_tools(tools), compare_models=compare_models).print()
 
@@ -174,7 +207,7 @@ def explain(
         typer.Option(help="Base URL for the openai-compatible provider."),
     ] = None,
     segmenter: Annotated[
-        str, typer.Option(help="sentences, paragraphs, sections, or tools.")
+        str, typer.Option(help="auto, sentences, paragraphs, sections, or tools.")
     ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
     sampler: Annotated[str, typer.Option(help="leave-one-out or random.")] = "leave-one-out",
@@ -184,7 +217,9 @@ def explain(
     ] = "placeholder",
     scorer: Annotated[
         str,
-        typer.Option(help="length, embedding, embedding-local, logprob, or tool-call."),
+        typer.Option(
+            help="length, embedding, embedding-local, logprob, tool-call, or tool-sequence."
+        ),
     ] = "length",
     scorer_config: Annotated[
         str | None,
@@ -209,13 +244,36 @@ def explain(
             help="Optional LLM prompt rewrites per feature to evaluate as supplementary analysis."
         ),
     ] = 0,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print the cost estimate and exit without provider calls."),
+    ] = False,
+    confirm: Annotated[
+        bool,
+        typer.Option(
+            "--confirm", help="Show the cost estimate and ask before making provider calls."
+        ),
+    ] = False,
+    exact_tokens: Annotated[
+        bool,
+        typer.Option(
+            "--exact-tokens",
+            help=(
+                "Count estimate tokens with the provider's free count_tokens endpoint "
+                "when the adapter supports it (anthropic). Needs credentials and network "
+                "but runs no inference; other providers fall back to local counting."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Run attribution using the SDK pipeline."""
     prompt_text = _read_prompt(prompt)
-    result = _harness(
+    tool_definitions = _read_tools(tools)
+    harness = _harness(
         provider=provider,
         model=model,
         segmenter_name=segmenter,
+        prompt_text=prompt_text,
         scale=scale,
         temperature=temperature,
         base_url=base_url,
@@ -226,7 +284,16 @@ def explain(
         masker_name=masker,
         samples_per_coalition=samples_per_coalition,
         use_batch_api=batch_api,
-    ).explain(prompt_text, tools=_read_tools(tools))
+    )
+    _cost_gate(
+        harness,
+        prompt_text,
+        tool_definitions,
+        dry_run=dry_run,
+        confirm=confirm,
+        exact_tokens=exact_tokens,
+    )
+    result = harness.explain(prompt_text, tools=tool_definitions)
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")
     result.print()
@@ -255,13 +322,15 @@ def optimize(
         typer.Option(help="Base URL for the openai-compatible provider."),
     ] = None,
     segmenter: Annotated[
-        str, typer.Option(help="sentences, paragraphs, sections, or tools.")
+        str, typer.Option(help="auto, sentences, paragraphs, sections, or tools.")
     ] = "sentences",
     tools: Annotated[str | None, typer.Option(help="Optional JSON tool schema file.")] = None,
     sampler: Annotated[str, typer.Option(help="leave-one-out or random.")] = "leave-one-out",
     scorer: Annotated[
         str,
-        typer.Option(help="length, embedding, embedding-local, logprob, or tool-call."),
+        typer.Option(
+            help="length, embedding, embedding-local, logprob, tool-call, or tool-sequence."
+        ),
     ] = "length",
     scorer_config: Annotated[
         str | None,
@@ -274,13 +343,40 @@ def optimize(
             help="Use the provider native batch API (openai, anthropic) for cheaper async runs."
         ),
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print the cost estimate and exit without provider calls."),
+    ] = False,
+    confirm: Annotated[
+        bool,
+        typer.Option(
+            "--confirm",
+            help=(
+                "Show the cost estimate and ask before making provider calls. "
+                "The final rewrite adds one call on top of the estimate."
+            ),
+        ),
+    ] = False,
+    exact_tokens: Annotated[
+        bool,
+        typer.Option(
+            "--exact-tokens",
+            help=(
+                "Count estimate tokens with the provider's free count_tokens endpoint "
+                "when the adapter supports it (anthropic). Needs credentials and network "
+                "but runs no inference; other providers fall back to local counting."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Run attribution, then propose an attribution-informed prompt rewrite."""
     prompt_text = _read_prompt(prompt)
-    result = _harness(
+    tool_definitions = _read_tools(tools)
+    harness = _harness(
         provider=provider,
         model=model,
         segmenter_name=segmenter,
+        prompt_text=prompt_text,
         scale=scale,
         temperature=temperature,
         base_url=base_url,
@@ -290,7 +386,16 @@ def optimize(
         supplementary_rewrites=0,
         use_batch_api=batch_api,
         with_optimizer=True,
-    ).optimize(prompt_text, tools=_read_tools(tools))
+    )
+    _cost_gate(
+        harness,
+        prompt_text,
+        tool_definitions,
+        dry_run=dry_run,
+        confirm=confirm,
+        exact_tokens=exact_tokens,
+    )
+    result = harness.optimize(prompt_text, tools=tool_definitions)
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")
     result.print()

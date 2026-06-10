@@ -29,6 +29,7 @@ from promptlens.scorers import (
     LogprobScorer,
     OpenAIEmbeddingClient,
     ToolAccuracyScorer,
+    ToolSequenceDriftScorer,
 )
 
 _DEFAULT_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -269,6 +270,8 @@ def build_scorer(name: str, *, config_path: str | None = None) -> Scorer:
         return EmbeddingScorer(_build_embedding_client(config))
     if scorer_key == "logprob":
         return LogprobScorer()
+    if scorer_key in {"tool-sequence", "trajectory"}:
+        return ToolSequenceDriftScorer()
     if scorer_key in {"tool-call", "tool-accuracy"}:
         expected_tool = config.get("expected_tool")
         if not isinstance(expected_tool, str) or not expected_tool:

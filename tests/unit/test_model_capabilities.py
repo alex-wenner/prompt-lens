@@ -2,6 +2,7 @@ from promptlens.adapters.models import (
     KNOWN_MODELS,
     lookup_model,
     supports_logprobs,
+    supports_temperature,
 )
 
 
@@ -44,3 +45,17 @@ def test_lookup_model_returns_metadata() -> None:
 def test_registry_includes_current_flagships() -> None:
     assert "gpt-5.5" in KNOWN_MODELS
     assert "claude-opus-4-8" in KNOWN_MODELS
+
+
+def test_opus_4_7_plus_do_not_support_temperature() -> None:
+    assert supports_temperature("claude-opus-4-8") is False
+    assert supports_temperature("anthropic/claude-opus-4-7") is False
+
+
+def test_other_models_support_temperature() -> None:
+    assert supports_temperature("claude-opus-4-6") is True
+    assert supports_temperature("claude-sonnet-4-6") is True
+    assert supports_temperature("claude-haiku-4-5") is True
+    assert supports_temperature("gpt-4o") is True
+    # Unknown models keep the historical default of sending temperature.
+    assert supports_temperature("some-local-model") is True

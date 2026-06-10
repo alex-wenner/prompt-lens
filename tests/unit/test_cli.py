@@ -93,3 +93,77 @@ def test_optimize_command_runs_with_echo(tmp_path) -> None:
     assert data["original_prompt"] == "Alpha sentence. Beta sentence."
     assert data["proposed_prompt"]
     assert "caveat" in data["metadata"]
+
+
+def test_explain_dry_run_estimates_without_running() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "CostEstimate" in result.output
+    assert "promptlens Attribution" not in result.output
+
+
+def test_explain_confirm_aborts_on_no() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+            "--confirm",
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code != 0
+    assert "CostEstimate" in result.output
+    assert "promptlens Attribution" not in result.output
+
+
+def test_explain_confirm_runs_on_yes() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+            "--confirm",
+        ],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0
+    assert "CostEstimate" in result.output
+    assert "promptlens Attribution" in result.output
+
+
+def test_auto_segmenter_picks_sections_for_markdown() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "# Role\nBe concise.\n\n# Task\nSummarize.",
+            "--provider",
+            "echo",
+            "--segmenter",
+            "auto",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "section_1" in result.output

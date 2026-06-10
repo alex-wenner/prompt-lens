@@ -23,9 +23,17 @@ class RandomCoalitionSampler(Sampler):
     misses, at the cost of being an approximation that needs enough samples to
     stabilize.
 
-    ``seed`` makes runs reproducible. The harness accumulates a feature's signal
-    from every coalition in which it is masked, so coalitions that include all or
-    no features contribute nothing useful and are resampled.
+    ``seed`` makes runs reproducible. Coalitions that include all or no features
+    are resampled so every evaluation call carries signal.
+
+    Because several features are masked per coalition, the harness attributes
+    the masked-vs-kept contrast (``mean(score | masked) - mean(score | kept)``)
+    rather than the raw mean over masked coalitions, cancelling the shared
+    co-masking offset; at ``inclusion_probability=0.5`` this is a Monte-Carlo
+    Banzhaf-value estimate. Skipping the degenerate coalitions couples features
+    slightly, which tends to push inert features just below zero rather than to
+    exactly zero — a conservative bias, since only positive attribution mass is
+    distributed as share.
     """
 
     def __init__(

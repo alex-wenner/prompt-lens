@@ -43,6 +43,27 @@ def test_tool_accuracy_scores_required_args() -> None:
     assert scorer.score(CompletionOutput(text=""), output) == 1.0
 
 
+def test_tool_accuracy_parses_json_string_arguments() -> None:
+    # OpenAI delivers tool-call arguments as a serialized JSON string.
+    scorer = ToolAccuracyScorer(expected_tool="search", required_args=["query", "limit"])
+    output = CompletionOutput(
+        text="",
+        tool_calls=[{"name": "search", "arguments": '{"query": "docs", "limit": 5}'}],
+    )
+
+    assert scorer.score(CompletionOutput(text=""), output) == 1.0
+
+
+def test_tool_accuracy_malformed_argument_string_scores_half() -> None:
+    scorer = ToolAccuracyScorer(expected_tool="search", required_args=["query"])
+    output = CompletionOutput(
+        text="",
+        tool_calls=[{"name": "search", "arguments": "{not json"}],
+    )
+
+    assert scorer.score(CompletionOutput(text=""), output) == 0.5
+
+
 def test_composite_scorer_weights_components() -> None:
     baseline = CompletionOutput(text="aaaa")
     candidate = CompletionOutput(text="aa")

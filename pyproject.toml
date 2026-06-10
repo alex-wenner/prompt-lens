@@ -60,5 +60,5 @@ testpaths = ["tests"]
 markers = ["slow: requires live provider credentials"]
 
 [[tool.mypy.overrides]]
-module = ["anthropic", "boto3", "openai", "copilot", "copilot.*", "xai_sdk", "xai_sdk.*", "google", "google.genai", "google.genai.*"]
+module = ["anthropic", "boto3", "openai", "tiktoken", "copilot", "copilot.*", "xai_sdk", "xai_sdk.*", "google", "google.genai", "google.genai.*"]
 ignore_missing_imports = true

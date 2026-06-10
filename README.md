@@ -25,7 +25,7 @@ Provider surfaces are intentionally thin and optional:
 - Amazon Bedrock via `boto3`
 - Any other OpenAI-compatible endpoint via the generic adapter — local/open-weight servers (Ollama, vLLM) and hosted gateways (use `openai-compatible` with a `--base-url`)
 
-The core stays independent of any specific agent runtime, so integrations such as Strands Agents can be layered on top without coupling the attribution engine to a framework.
+The core stays independent of any specific agent runtime, so integrations such as Strands Agents can be layered on top without coupling the attribution engine to a framework. `AgentAdapter` makes that concrete: treat one **whole agent run** (multiple model turns plus tool executions) as the unit under attribution — mask pieces of the agent's system prompt while the task stays fixed, and score how the trajectory changed with `ToolSequenceDriftScorer` or any text scorer over the final answer. See [attributing whole agent runs](docs/detailed-guide.md#attributing-whole-agent-runs).
 
 ## Install
 
@@ -51,6 +51,12 @@ Estimate the cost of an attribution run without making provider calls:
 
 ```bash
 promptlens estimate --prompt "Write a haiku about testing" --model openai/gpt-4o-mini
+```
+
+Or skip the separate step: `--dry-run` prints the estimate and exits, `--confirm` shows it and asks before spending, and `--segmenter auto` picks a segmenter from the prompt's shape. Input tokens are counted per actual masked prompt — with `tiktoken` for OpenAI-family models when installed, a conservative heuristic otherwise, or exactly via the provider's free `count_tokens` metering endpoint with `--exact-tokens` (anthropic; needs credentials but runs no inference):
+
+```bash
+promptlens explain --prompt ./prompt.md --provider openai --segmenter auto --confirm
 ```
 
 Run the offline example pipeline with the built-in echo adapter:
