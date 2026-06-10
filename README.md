@@ -125,14 +125,17 @@ The proposed rewrite is returned for review, never adopted automatically, and th
 
 ## Examples
 
-The [`examples/`](examples/) directory has four runnable walkthroughs (no API keys required — they fall back to deterministic offline adapters):
+The [`examples/`](examples/) directory has seven runnable walkthroughs (no API keys required — they fall back to deterministic offline adapters), each pinning a different provider and config permutation:
 
 - [`order_operations_agent/`](examples/order_operations_agent/) ⭐ — the flagship: a realistic eight-section operations SOP (business objects, refund policy, escalation matrix, output contract) attributed coarse-to-fine with drill-down and argument-weighted tool drift.
+- [`local_inference/`](examples/local_inference/) — run the whole loop *and* its synopsis on a local Ollama model: `DropMasker`, paragraph segmentation, `LLMSynopsisWriter`, $0.
+- [`interaction_effects/`](examples/interaction_effects/) — why leave-one-out scores two genuinely load-bearing instructions as dead weight, and how the random-coalition (Banzhaf) sampler recovers them.
+- [`cost_compare/`](examples/cost_compare/) — estimate a run's cost across a frontier, mid-tier, cheap, and free local model before spending, with `compare_models`.
 - [`tool_routing_bug/`](examples/tool_routing_bug/) — find the tool-schema description that makes an agent call the wrong tool, then prove the fix with a before/after tool-accuracy metric.
 - [`system_prompt_cleanup/`](examples/system_prompt_cleanup/) — separate the load-bearing lines of a long system prompt from inert dead weight.
 - [`optimize_before_after/`](examples/optimize_before_after/) — turn attribution evidence into a concrete prompt rewrite.
 
-The examples README also maps **every attribution calculator** (each scorer, both samplers, drill-down) to the example or one-line command that demonstrates it.
+The examples README maps **every attribution calculator** (each scorer, both samplers, drill-down, synopsis) to the example that demonstrates it, and shows how to point any example at a different provider.
 
 ```bash
 python examples/order_operations_agent/run.py

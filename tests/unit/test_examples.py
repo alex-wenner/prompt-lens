@@ -77,3 +77,34 @@ def test_order_operations_agent_example() -> None:
     ]
     assert all(result["shares"][name] < 0.05 for name in inert)
     assert result["calls_used"] < result["flat_calls"]
+
+
+def test_local_inference_example() -> None:
+    module = _load_example("local_inference")
+    result = module.main(adapter=module.SimulatedLocalModel())
+
+    # The two formatting paragraphs carry the output; role/tone are inert.
+    assert result["top_feature"].startswith("paragraph_")
+    assert result["synopsis"]
+    assert result["synopsis_model"] == "simulated-local-model"
+
+
+def test_interaction_effects_example() -> None:
+    module = _load_example("interaction_effects")
+    result = module.main(adapter=module.SimulatedHelpdeskAgent())
+
+    # Leave-one-out misses both redundant drivers; Banzhaf recovers both.
+    assert abs(result["leave_one_out"]["reasoning"]) < 1e-9
+    assert abs(result["leave_one_out"]["example"]) < 1e-9
+    assert result["banzhaf"]["reasoning"] > 0.1
+    assert result["banzhaf"]["example"] > 0.1
+
+
+def test_cost_compare_example() -> None:
+    module = _load_example("cost_compare")
+    result = module.main()
+
+    assert result["full_total_usd"] > result["quick_total_usd"]
+    assert result["full_evaluations"] > result["quick_evaluations"]
+    # Local inference is the free option in the comparison.
+    assert result["comparisons"]["ollama/llama3.2"] == 0.0

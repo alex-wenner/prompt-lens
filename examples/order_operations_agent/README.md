@@ -34,6 +34,6 @@ python examples/order_operations_agent/run.py
 ```
 
 Runs against a real provider when `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` is set
-(see [`_realprovider.py`](../_realprovider.py)); otherwise uses a deterministic
+(see [`_shared.py`](../_shared.py)); otherwise uses a deterministic
 offline agent whose trajectory is governed by the same policy sentences a real
 model would key on.

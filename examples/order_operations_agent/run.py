@@ -15,7 +15,7 @@ scorer (a free-text ``summary`` parameter is weighted to zero so rephrasing
 never counts as drift) blended with output-length drift for the reply envelope.
 
 By default this runs against a **real provider** (set ``OPENAI_API_KEY`` or
-``ANTHROPIC_API_KEY``; see ``examples/_realprovider.py``). With no credential it
+``ANTHROPIC_API_KEY``; see ``examples/_shared.py``). With no credential it
 falls back to a deterministic offline agent whose tool trajectory is governed by
 the same policy sentences a real model would key on, so the example runs
 end-to-end and doubles as a CI smoke test.
@@ -34,9 +34,9 @@ from promptlens.scorers import CompositeScorer, LengthDriftScorer, ToolArgumentD
 from promptlens.segmenters import MarkdownSectionSegmenter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _realprovider import select_adapter  # noqa: E402
+from _shared import load_text, print_footer, select_adapter  # noqa: E402
 
-INSTRUCTIONS = (Path(__file__).resolve().parent / "instructions.md").read_text(encoding="utf-8")
+INSTRUCTIONS = load_text(__file__, "instructions.md")
 
 TICKET = (
     "Account manager Dana Whitfield: customer Helio Manufacturing requests a "
@@ -205,9 +205,9 @@ def main(adapter: Adapter | None = None) -> dict[str, Any]:
         f"\nProvider calls: {result.provider_calls_used} with drill-down vs "
         f"~{result.flat_sweep_provider_calls} for a flat sentence sweep."
     )
-    print(
-        "\nLens, not oracle: drill-down finds the sentences that drive the "
-        "trajectory; confirm policy edits with a task-level metric before shipping."
+    print_footer(
+        "drill-down finds the sentences that drive the trajectory; confirm policy "
+        "edits with a task-level metric before shipping."
     )
     return {
         "headings": headings,

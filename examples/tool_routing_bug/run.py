@@ -8,7 +8,7 @@ agent's tool choice changes, surfacing the one sentence that actually drives the
 routing decision.
 
 By default this runs against a **real provider** (set ``OPENAI_API_KEY`` or
-``ANTHROPIC_API_KEY``; see ``examples/_realprovider.py`` for the env vars). When
+``ANTHROPIC_API_KEY``; see ``examples/_shared.py`` for the env vars). When
 no credential is available it falls back to a deterministic offline adapter that
 routes to ``lookup_order`` only while the order-id hint survives, so the example
 still runs end-to-end and doubles as a CI smoke test.
@@ -29,7 +29,7 @@ from promptlens.scorers import ToolAccuracyScorer
 from promptlens.segmenters import SentenceSegmenter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _realprovider import select_adapter  # noqa: E402
+from _shared import print_footer, select_adapter  # noqa: E402
 
 # The offline fallback model routes to lookup_order only when this hint survives
 # in the prompt. It appears in exactly one sentence: the order_reference
@@ -125,9 +125,9 @@ def main(adapter: Adapter | None = None) -> dict[str, Any]:
         f"  tool accuracy with the misleading description: {before:.2f}\n"
         f"  tool accuracy after restoring the description: {after:.2f}"
     )
-    print(
-        "\nLens, not oracle: attribution located the sentence that drives "
-        "routing; the before/after accuracy is what proves the fix."
+    print_footer(
+        "attribution located the sentence that drives routing; the before/after "
+        "accuracy is what proves the fix."
     )
     return {
         "top_feature": top_feature.feature.name,

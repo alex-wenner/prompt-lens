@@ -6,7 +6,7 @@ a leave-one-out attribution sweep, then hands that evidence to an
 ``LLMPromptOptimizer`` which proposes a whole-prompt rewrite for review.
 
 By default this runs against a **real provider** (set ``OPENAI_API_KEY`` or
-``ANTHROPIC_API_KEY``; see ``examples/_realprovider.py`` for the env vars): the
+``ANTHROPIC_API_KEY``; see ``examples/_shared.py`` for the env vars): the
 same model both answers the attribution sweep and proposes the rewrite. When no
 credential is available it falls back to a deterministic offline adapter that
 echoes prompts during attribution and returns a scripted rewrite for the
@@ -33,7 +33,7 @@ from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import SentenceSegmenter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _realprovider import select_adapter  # noqa: E402
+from _shared import print_footer, select_adapter  # noqa: E402
 
 ORIGINAL_PROMPT = (
     "You are an extremely helpful, friendly, and knowledgeable assistant. "
@@ -77,9 +77,9 @@ def main(adapter: Adapter | None = None) -> dict[str, Any]:
 
     print("Attribution-informed prompt rewrite:\n")
     result.print()
-    print(
-        "\nLens, not oracle: the proposed rewrite is a candidate, not a verified "
-        "improvement. Re-run attribution and a task metric before adopting it."
+    print_footer(
+        "the proposed rewrite is a candidate, not a verified improvement. Re-run "
+        "attribution and a task metric before adopting it."
     )
     return {
         "original_prompt": result.original_prompt,
