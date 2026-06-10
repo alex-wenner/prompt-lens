@@ -1,10 +1,12 @@
-"""Provider-backed embedding clients for the semantic drift scorer.
+"""Embedding clients for the semantic drift scorer.
 
 :class:`~promptlens.scorers.text.EmbeddingScorer` accepts any object matching the
-:class:`~promptlens.scorers.text.EmbeddingClient` protocol. This module supplies a
-real, provider-backed client so attribution can be scored with genuine semantic
-embeddings rather than the deterministic text-shape fallback used for offline
-smoke runs.
+:class:`~promptlens.scorers.text.EmbeddingClient` protocol. This module supplies two
+real clients:
+
+* :class:`OpenAIEmbeddingClient` — calls the OpenAI (or compatible) embeddings API.
+* :class:`HuggingFaceEmbeddingClient` — runs a ``sentence-transformers`` model locally,
+  no API key required. Install with ``pip install sentence-transformers``.
 """
 
 from __future__ import annotations
@@ -49,3 +51,50 @@ def _default_client(base_url: str | None) -> Any:
     if base_url:
         return OpenAI(base_url=base_url)
     return OpenAI()
+
+
+class HuggingFaceEmbeddingClient:
+    """Embed text locally with a ``sentence-transformers`` model.
+
+    No API key required. The model is downloaded once and cached by
+    ``sentence-transformers`` on first use.
+
+    Install the dependency with::
+
+        pip install sentence-transformers
+
+    Or use the bundled extra::
+
+        pip install -e '.[hf]'
+
+    Parameters
+    ----------
+    model:
+        Any model name accepted by ``sentence-transformers``, e.g.
+        ``"all-MiniLM-L6-v2"`` (fast, 384-dim) or
+        ``"Qwen/Qwen3-Embedding"`` (higher quality, requires more RAM).
+        Defaults to ``"all-MiniLM-L6-v2"``.
+    """
+
+    def __init__(self, model: str = "all-MiniLM-L6-v2") -> None:
+        self.model = model
+        self._encoder: Any | None = None
+
+    def _get_encoder(self) -> Any:
+        if self._encoder is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+            except ImportError as exc:
+                msg = (
+                    "Install sentence-transformers to use HuggingFaceEmbeddingClient: "
+                    "pip install sentence-transformers"
+                )
+                raise RuntimeError(msg) from exc
+            self._encoder = SentenceTransformer(self.model)
+        return self._encoder
+
+    def embed(self, text: str) -> Sequence[float]:
+        """Return the embedding vector for ``text`` using the local model."""
+        encoder = self._get_encoder()
+        vector = encoder.encode(text, convert_to_numpy=True)
+        return [float(v) for v in vector]

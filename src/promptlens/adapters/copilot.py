@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import threading
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Sequence
 from typing import Any
 
 from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
@@ -39,14 +39,19 @@ class CopilotAdapter(Adapter):
         github_token: str | None = None,
         timeout: float = 120.0,
         client: Any | None = None,
+        max_parallel: int = 8,
     ) -> None:
         if timeout <= 0:
             msg = f"timeout must be > 0, got {timeout}"
+            raise ValueError(msg)
+        if max_parallel < 1:
+            msg = f"max_parallel must be >= 1, got {max_parallel}"
             raise ValueError(msg)
         self.model = model
         self.temperature = temperature
         self.github_token = github_token
         self.timeout = timeout
+        self.max_parallel = max_parallel
         self._client = client
         self._owns_client = client is None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -59,6 +64,29 @@ class CopilotAdapter(Adapter):
         result = self._run(self._acomplete(prompt, tools))
         assert isinstance(result, CompletionOutput)
         return result
+
+    def complete_batch(
+        self, prompts: Sequence[str], tools: ToolDefinitions | None = None
+    ) -> list[CompletionOutput]:
+        """Run all prompts concurrently on the shared event loop.
+
+        Up to ``max_parallel`` sessions are active at once; the rest queue behind
+        a semaphore so the Copilot runtime is not overwhelmed.
+        """
+        results = self._run(self._acomplete_batch(list(prompts), tools))
+        assert isinstance(results, list)
+        return results
+
+    async def _acomplete_batch(
+        self, prompts: list[str], tools: ToolDefinitions | None
+    ) -> list[CompletionOutput]:
+        sem = asyncio.Semaphore(self.max_parallel)
+
+        async def _bounded(prompt: str) -> CompletionOutput:
+            async with sem:
+                return await self._acomplete(prompt, tools)
+
+        return list(await asyncio.gather(*(_bounded(p) for p in prompts)))
 
     async def _acomplete(
         self, prompt: str, tools: ToolDefinitions | None

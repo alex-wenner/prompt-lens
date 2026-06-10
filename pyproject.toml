@@ -24,6 +24,7 @@ bedrock = ["boto3>=1.35"]
 copilot = ["github-copilot-sdk>=1.0"]
 grok = ["xai-sdk>=1.0"]
 gemini = ["google-genai>=1.0"]
+hf = ["sentence-transformers>=3.0"]
 shap = ["shap>=0.46"]
 dev = ["pytest>=8.2", "ruff>=0.6", "mypy>=1.11"]
 all = [
@@ -34,6 +35,7 @@ all = [
   "github-copilot-sdk>=1.0",
   "xai-sdk>=1.0",
   "google-genai>=1.0",
+  "sentence-transformers>=3.0",
   "shap>=0.46",
 ]
 
@@ -60,5 +62,5 @@ testpaths = ["tests"]
 markers = ["slow: requires live provider credentials"]
 
 [[tool.mypy.overrides]]
-module = ["anthropic", "boto3", "openai", "tiktoken", "copilot", "copilot.*", "xai_sdk", "xai_sdk.*", "google", "google.genai", "google.genai.*"]
+module = ["anthropic", "boto3", "openai", "tiktoken", "copilot", "copilot.*", "xai_sdk", "xai_sdk.*", "google", "google.genai", "google.genai.*", "sentence_transformers"]
 ignore_missing_imports = true
