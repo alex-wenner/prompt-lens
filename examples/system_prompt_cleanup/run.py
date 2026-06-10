@@ -6,7 +6,7 @@ and scores how much the model output drifts — so the inert "dead weight" lines
 fall to ~0% while the lines that actually shape the output rise to the top.
 
 By default this runs against a **real provider** (set ``OPENAI_API_KEY`` or
-``ANTHROPIC_API_KEY``; see ``examples/_realprovider.py`` for the env vars). When
+``ANTHROPIC_API_KEY``; see ``examples/_shared.py`` for the env vars). When
 no credential is available it falls back to a deterministic offline adapter whose
 output shape depends only on two instructions:
 
@@ -31,19 +31,13 @@ from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import SentenceSegmenter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _realprovider import select_adapter  # noqa: E402
+from _shared import load_text, print_footer, select_adapter  # noqa: E402
 
 JSON_SIGNAL = "valid json"
 CONFIDENCE_SIGNAL = "confidence score"
 
-SYSTEM_PROMPT = (
-    "You are a friendly and helpful customer support assistant. "
-    "Always respond in valid JSON. "
-    "Be polite and empathetic with every customer. "
-    "Include a confidence score between 0 and 1 for your answer. "
-    "Never share internal company secrets. "
-    "Remember that the customer is always the hero of their own story."
-)
+# Single source of truth: the same file the README points the CLI at.
+SYSTEM_PROMPT = load_text(__file__, "system_prompt.txt").strip()
 
 
 class SimulatedFormatter(Adapter):
@@ -89,9 +83,9 @@ def main(adapter: Adapter | None = None) -> dict[str, Any]:
     print("\nDead-weight under this scorer (candidates to review, not auto-delete):")
     for text in dead_weight:
         print(f"  - {text}")
-    print(
-        "\nLens, not oracle: 'no measured effect' under a length/drift scorer is "
-        "not proof a line is useless. Verify with a task metric before trimming."
+    print_footer(
+        "'no measured effect' under a length/drift scorer is not proof a line is "
+        "useless. Verify with a task metric before trimming."
     )
     return {"shares": shares, "load_bearing": load_bearing, "dead_weight": dead_weight}
 

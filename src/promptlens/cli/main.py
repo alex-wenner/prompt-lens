@@ -9,13 +9,22 @@ from typing import Annotated
 
 import typer
 
-from promptlens import AttributionHarness, Segmenter
+from promptlens import (
+    Adapter,
+    AttributionHarness,
+    AttributionResult,
+    DrilldownResult,
+    Segmenter,
+    explain_drilldown,
+)
 from promptlens.adapters import EchoAdapter
+from promptlens.cli.banner import print_banner
 from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
 from promptlens.core.base import ToolDefinitions
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
 from promptlens.mutators import LLMRewriteMutator
 from promptlens.optimizers import LLMPromptOptimizer
+from promptlens.reporters import LLMSynopsisWriter
 from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import (
     MarkdownSectionSegmenter,
@@ -27,6 +36,14 @@ from promptlens.segmenters import (
 app = typer.Typer(help="Black-box prompt attribution for LLM prompts.")
 
 _SCALE_HELP = "Perturbation scale: quick, standard, full, or an integer repeat count."
+
+
+@app.callback(invoke_without_command=True)
+def _entry(ctx: typer.Context) -> None:
+    """Black-box prompt attribution for LLM prompts."""
+    if ctx.invoked_subcommand is None:
+        print_banner()
+        typer.echo("Try `promptlens wizard` for a guided run, or `promptlens --help`.")
 
 
 def _read_prompt(prompt: str) -> str:
@@ -193,7 +210,7 @@ def explain(
         typer.Option(
             help=(
                 "Provider type: echo, openai, anthropic, bedrock, copilot, grok, "
-                "gemini, or openai-compatible (with --base-url)."
+                "gemini, ollama (local), or openai-compatible (with --base-url)."
             )
         ),
     ] = "echo",
@@ -204,7 +221,7 @@ def explain(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL for the openai-compatible provider."),
+        typer.Option(help="Base URL for the ollama or openai-compatible providers."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="auto, sentences, paragraphs, sections, or tools.")
@@ -218,7 +235,10 @@ def explain(
     scorer: Annotated[
         str,
         typer.Option(
-            help="length, embedding, embedding-local, logprob, tool-call, or tool-sequence."
+            help=(
+                "length, embedding, embedding-local, logprob, tool-call, "
+                "tool-sequence, or tool-args."
+            )
         ),
     ] = "length",
     scorer_config: Annotated[
@@ -226,6 +246,24 @@ def explain(
         typer.Option(help="Optional JSON scorer config path."),
     ] = None,
     scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
+    drilldown: Annotated[
+        bool,
+        typer.Option(
+            "--drilldown",
+            help=(
+                "Coarse-to-fine attribution: attribute sections first, then refine "
+                "only the top sections sentence by sentence — far fewer provider "
+                "calls than a flat sentence sweep on long prompts. Uses the auto "
+                "segmenter for the coarse pass unless --segmenter overrides it. "
+                "The cost estimate covers the overview pass; each refined section "
+                "adds roughly one sentence sweep."
+            ),
+        ),
+    ] = False,
+    drilldown_top: Annotated[
+        int,
+        typer.Option(help="How many top coarse features to refine with --drilldown."),
+    ] = 2,
     samples_per_coalition: Annotated[
         int,
         typer.Option(
@@ -244,6 +282,33 @@ def explain(
             help="Optional LLM prompt rewrites per feature to evaluate as supplementary analysis."
         ),
     ] = 0,
+    synopsis: Annotated[
+        bool,
+        typer.Option(
+            "--synopsis",
+            help=(
+                "After attribution, make one extra LLM call that turns the full "
+                "evidence into a plain-language synopsis."
+            ),
+        ),
+    ] = False,
+    synopsis_provider: Annotated[
+        str | None,
+        typer.Option(
+            help=(
+                "Provider for the synopsis call; defaults to the run provider. "
+                "Point at ollama or openai-compatible to summarize on a local model."
+            )
+        ),
+    ] = None,
+    synopsis_model: Annotated[
+        str | None,
+        typer.Option(help="Model id for the synopsis call."),
+    ] = None,
+    synopsis_base_url: Annotated[
+        str | None,
+        typer.Option(help="Base URL for an ollama/openai-compatible synopsis provider."),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", help="Print the cost estimate and exit without provider calls."),
@@ -269,6 +334,10 @@ def explain(
     """Run attribution using the SDK pipeline."""
     prompt_text = _read_prompt(prompt)
     tool_definitions = _read_tools(tools)
+    if drilldown and segmenter == "sentences":
+        # A sentence-grained coarse pass leaves nothing to refine; drill-down
+        # wants sections or paragraphs first, which "auto" picks from the shape.
+        segmenter = "auto"
     harness = _harness(
         provider=provider,
         model=model,
@@ -293,10 +362,65 @@ def explain(
         confirm=confirm,
         exact_tokens=exact_tokens,
     )
-    result = harness.explain(prompt_text, tools=tool_definitions)
+    result: AttributionResult | DrilldownResult
+    if drilldown:
+        drilldown_result = explain_drilldown(
+            harness, prompt_text, tools=tool_definitions, top_k=drilldown_top
+        )
+        result = drilldown_result
+        synopsis_target = drilldown_result.overview
+    else:
+        result = harness.explain(prompt_text, tools=tool_definitions)
+        synopsis_target = result
+    if synopsis:
+        writer = LLMSynopsisWriter(
+            _synopsis_adapter(
+                run_provider=provider,
+                run_model=model,
+                run_base_url=base_url,
+                synopsis_provider=synopsis_provider,
+                synopsis_model=synopsis_model,
+                synopsis_base_url=synopsis_base_url,
+                temperature=temperature,
+            )
+        )
+        enriched = synopsis_target.with_synopsis(
+            writer.summarize(prompt_text, synopsis_target)
+        )
+        result = result.model_copy(update={"overview": enriched}) if drilldown else enriched
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")
     result.print()
+
+
+def _synopsis_adapter(
+    *,
+    run_provider: str,
+    run_model: str | None,
+    run_base_url: str | None,
+    synopsis_provider: str | None,
+    synopsis_model: str | None,
+    synopsis_base_url: str | None,
+    temperature: float,
+) -> Adapter:
+    """Build the adapter for the synopsis call.
+
+    With no synopsis overrides this reuses the attribution run's provider
+    settings. Overriding the provider drops back to that provider's own
+    defaults for model and base URL unless they are overridden too, so
+    ``--synopsis-provider ollama`` alone summarizes on the local default model.
+    """
+    provider = synopsis_provider or run_provider
+    same_provider = provider == run_provider
+    try:
+        return build_adapter(
+            provider=provider,
+            model=synopsis_model or (run_model if same_provider else None),
+            temperature=temperature,
+            base_url=synopsis_base_url or (run_base_url if same_provider else None),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @app.command()
@@ -308,7 +432,7 @@ def optimize(
         typer.Option(
             help=(
                 "Provider type: echo, openai, anthropic, bedrock, copilot, grok, "
-                "gemini, or openai-compatible (with --base-url)."
+                "gemini, ollama (local), or openai-compatible (with --base-url)."
             )
         ),
     ] = "echo",
@@ -319,7 +443,7 @@ def optimize(
     temperature: Annotated[float, typer.Option(help="Provider sampling temperature.")] = 0.0,
     base_url: Annotated[
         str | None,
-        typer.Option(help="Base URL for the openai-compatible provider."),
+        typer.Option(help="Base URL for the ollama or openai-compatible providers."),
     ] = None,
     segmenter: Annotated[
         str, typer.Option(help="auto, sentences, paragraphs, sections, or tools.")
@@ -329,7 +453,10 @@ def optimize(
     scorer: Annotated[
         str,
         typer.Option(
-            help="length, embedding, embedding-local, logprob, tool-call, or tool-sequence."
+            help=(
+                "length, embedding, embedding-local, logprob, tool-call, "
+                "tool-sequence, or tool-args."
+            )
         ),
     ] = "length",
     scorer_config: Annotated[
@@ -406,3 +533,10 @@ def list_models() -> None:
     """List built-in pricing entries."""
     for model, (input_rate, output_rate) in sorted(MODEL_PRICING_USD_PER_MTOK.items()):
         typer.echo(f"{model}\tinput=${input_rate}/MTok\toutput=${output_rate}/MTok")
+
+
+# Registered late so the wizard can lazily import this module's helpers without
+# a circular import at load time.
+from promptlens.cli.wizard import run_wizard  # noqa: E402
+
+app.command("wizard")(run_wizard)

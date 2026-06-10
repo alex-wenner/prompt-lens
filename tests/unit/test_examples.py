@@ -52,3 +52,59 @@ def test_optimize_before_after_example() -> None:
     assert result["proposed_prompt"] == "Summarize the input text in exactly three bullet points."
     assert result["proposed_prompt"] != result["original_prompt"]
     assert result["rationale"]
+
+
+def test_order_operations_agent_example() -> None:
+    module = _load_example("order_operations_agent")
+    result = module.main(adapter=module.SimulatedOrderOpsAgent())
+
+    refined = result["refined"]
+    headings = result["headings"]
+    refund_sections = [
+        name for name in refined if headings[name] == "# Refund policy"
+    ]
+    assert refund_sections, "the refund policy section should be refined"
+    assert "must be escalated" in refined[refund_sections[0]]
+    tool_sections = [
+        name for name in refined if headings[name] == "# Tool usage rules"
+    ]
+    assert tool_sections, "the tool usage rules section should be refined"
+    # Glossary and tone are dead weight for this ticket.
+    inert = [
+        name
+        for name, heading in headings.items()
+        if heading in {"# Business objects", "# Tone and communication"}
+    ]
+    assert all(result["shares"][name] < 0.05 for name in inert)
+    assert result["calls_used"] < result["flat_calls"]
+
+
+def test_local_inference_example() -> None:
+    module = _load_example("local_inference")
+    result = module.main(adapter=module.SimulatedLocalModel())
+
+    # The two formatting paragraphs carry the output; role/tone are inert.
+    assert result["top_feature"].startswith("paragraph_")
+    assert result["synopsis"]
+    assert result["synopsis_model"] == "simulated-local-model"
+
+
+def test_interaction_effects_example() -> None:
+    module = _load_example("interaction_effects")
+    result = module.main(adapter=module.SimulatedHelpdeskAgent())
+
+    # Leave-one-out misses both redundant drivers; Banzhaf recovers both.
+    assert abs(result["leave_one_out"]["reasoning"]) < 1e-9
+    assert abs(result["leave_one_out"]["example"]) < 1e-9
+    assert result["banzhaf"]["reasoning"] > 0.1
+    assert result["banzhaf"]["example"] > 0.1
+
+
+def test_cost_compare_example() -> None:
+    module = _load_example("cost_compare")
+    result = module.main()
+
+    assert result["full_total_usd"] > result["quick_total_usd"]
+    assert result["full_evaluations"] > result["quick_evaluations"]
+    # Local inference is the free option in the comparison.
+    assert result["comparisons"]["ollama/llama3.2"] == 0.0

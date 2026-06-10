@@ -82,7 +82,7 @@ Available adapters include:
 - `CopilotAdapter` for GitHub Copilot via the official `github-copilot-sdk`. It drives the bundled Copilot CLI runtime through the SDK's session API rather than an HTTP endpoint, so it does not take a `--base-url`. See the [GitHub Copilot guide](github-copilot.md).
 - `GrokAdapter` for xAI Grok via the official `xai-sdk`. On the CLI use the `grok` provider; the API key is read from `XAI_API_KEY`/`GROK_API_KEY`.
 - `GeminiAdapter` for Google Gemini via the official `google-genai` SDK. On the CLI use the `gemini` provider; the API key is read from `GEMINI_API_KEY`/`GOOGLE_API_KEY`.
-- `OpenAICompatibleAdapter`, the generic escape hatch for any other OpenAI-compatible endpoint — local servers (Ollama, vLLM) and hosted gateways. On the CLI use the `openai-compatible` provider with an explicit `--base-url`.
+- `OpenAICompatibleAdapter`, the generic escape hatch for any other OpenAI-compatible endpoint — local servers (Ollama, vLLM) and hosted gateways. On the CLI use the `openai-compatible` provider with an explicit `--base-url`, or the first-class `ollama` provider (alias `local`) which defaults to `http://localhost:11434/v1` and reads `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, and the Ollama CLI's `OLLAMA_HOST` convention. Local models are priced at `$0` by the cost estimator, so attribution sweeps — which multiply provider calls by feature count — are free to iterate on before pointing the same pipeline at a paid provider.
 
 Only some models return token log probabilities. The OpenAI GPT-5 reasoning family (and the older `o`-series) do not accept the `logprobs` parameter, while the GPT-4o and GPT-4.1 families do; Anthropic's Messages API never exposes logprobs. `OpenAIAdapter` consults `promptlens.adapters.models.supports_logprobs` and raises a clear error if you request `logprobs=True` for a model that cannot return them, instead of surfacing an opaque provider 400.
 
@@ -198,7 +198,8 @@ Scorers convert output differences into numeric signals.
 - `EmbeddingScorer` measures semantic drift with an embedding client. On the CLI the `embedding` scorer is provider-backed: pass a scorer config naming a provider, e.g. `{"provider": "openai", "model": "text-embedding-3-small"}`. For fully offline smoke runs use the `embedding-local` scorer, a deterministic text-shape fallback that is **not** semantic and should never be used for real attribution.
 - `LogprobScorer` compares average token log probabilities when the adapter provides them. Use it only with models that return logprobs (e.g. OpenAI `gpt-4o`/`gpt-4.1`); GPT-5 reasoning models and Anthropic models do not expose them.
 - `ToolAccuracyScorer` checks whether a completion selected an expected tool and required arguments.
-- `ToolSequenceDriftScorer` (`tool-sequence` on the CLI) measures the normalized edit distance between the baseline and candidate tool-call sequences — tool-choice drift for single completions, tool-*path* drift for `AgentAdapter` runs.
+- `ToolSequenceDriftScorer` (`tool-sequence` on the CLI) measures the normalized edit distance between the baseline and candidate tool-call sequences — tool-choice drift for single completions, tool-*path* drift for `AgentAdapter` runs. Only tool *names* are compared.
+- `ToolArgumentDriftScorer` (`tool-args` on the CLI) extends tool-sequence drift down into the arguments each tool was called with, using explicit per-parameter weights. See [weighting tool-call parameters](#weighting-tool-call-parameters).
 - `CompositeScorer` combines several scorers as a weighted sum, e.g. `0.7` embedding drift plus `0.3` length drift, when "what changed" is best captured by more than one signal.
 
 The right scorer depends on what "changed" means for your task. For factual answer quality, semantic distance may be useful. For tool routing, tool accuracy is usually more direct.
@@ -213,6 +214,35 @@ Scorers declare an `orientation` because "a higher score" means opposite things 
 For objective scorers the harness does *not* treat the raw value as attribution. It first measures the baseline's own objective, then attributes a feature by how far the objective **drops** when that feature is masked. So a feature whose removal still yields the correct tool call correctly receives near-zero attribution, while a feature whose removal breaks the tool call receives high attribution. The raw per-coalition objective is still stored on each `CoalitionEvaluation` for transparency.
 
 Because the two orientations point in opposite directions for attribution, `CompositeScorer` requires all of its components to share one orientation rather than silently summing a drift signal with a quality signal.
+
+#### Weighting tool-call parameters
+
+`ToolSequenceDriftScorer` treats two calls to the same tool as identical even when their arguments differ, which is the right default for "did the agent take a different path?" — but it is blind to an agent that calls the right tool with the wrong `account_id`. `ToolArgumentDriftScorer` closes that gap while keeping you in control of how much each parameter matters:
+
+- Calling a **different tool** still costs a full `1.0` per position. Same-tool calls with different arguments cost at most `argument_weight` (default `0.5`), so argument churn can never swing the score more than an outright tool-choice change.
+- The per-call argument drift is the weighted fraction of changed parameters over the union of both calls' parameter names. `param_weights` sets per-parameter weights: weight `0.0` makes a noisy free-text parameter (a `reason` field the model rephrases every run) inert, while a heavy weight makes a critical identifier dominate. Unlisted parameters get `default_param_weight`.
+- **Should an agent passing `undefined` swing the output?** By default, no: `none_is_missing=True` treats an explicit `null` argument exactly like an omitted parameter, so an agent that pads its calls with nulls scores `0.0` drift against one that leaves them out. Flip it to `False` when a null is meaningful to your tool (e.g. it clears a value server-side) and genuinely *is* a different call.
+
+```python
+from promptlens.scorers import ToolArgumentDriftScorer
+
+scorer = ToolArgumentDriftScorer(
+    argument_weight=0.5,
+    param_weights={"account_id": 5.0, "reason": 0.0},
+    none_is_missing=True,
+)
+```
+
+On the CLI, pass the same options through `--scorer tool-args --scorer-config args.json`:
+
+```json
+{
+  "argument_weight": 0.5,
+  "param_weights": {"account_id": 5.0, "reason": 0.0},
+  "default_param_weight": 1.0,
+  "none_is_missing": true
+}
+```
 
 ### Samplers and perturbation scale
 
@@ -234,7 +264,27 @@ The estimator differs between the two samplers, and the difference matters:
 
 For distributional attribution you can also keep a single leave-one-out sweep but evaluate each coalition multiple times with `samples_per_coalition` (`--samples-per-coalition` on the CLI). At temperature > 0 this turns each coalition into a small distribution: per-coalition scores are averaged, every sample feeds the feature's standard error, and the cost estimator multiplies its evaluation count so the spend preview stays honest.
 
+### Coarse-to-fine drill-down
+
+Sentence granularity over a production-sized instruction set gets expensive fast: a 60-sentence operations prompt is 60+ provider calls per leave-one-out sweep, most of them spent confirming that boilerplate is boilerplate. `explain_drilldown` spends those calls where they matter:
+
+1. **Overview pass** — attribute the prompt at the harness's own (coarse) granularity: markdown sections or paragraphs.
+2. **Refinement passes** — take the `top_k` highest-attribution coarse features and re-attribute each one sentence by sentence, keeping everything outside the refined section **byte-for-byte intact** so every refined evaluation still sees the full instruction set and its scores stay comparable to the overview's.
+
+```python
+from promptlens import explain_drilldown
+
+result = explain_drilldown(harness, prompt, top_k=2)
+result.print()  # overview table, one refined table per hot section, and the call accounting
+```
+
+The result reports `provider_calls_used` versus `flat_sweep_provider_calls` so the saving is explicit — on the eight-section [order-operations example](../examples/order_operations_agent/) that is ~20 calls instead of ~29, and the gap grows with prompt size. On the CLI, pass `--drilldown` (and optionally `--drilldown-top N`); when the segmenter is the default sentence one, drill-down switches the coarse pass to `auto` so there is something to refine. Candidates that cannot be located in the prompt (the synthetic tools feature) or cannot be split into at least two sentences are skipped.
+
+Drill-down's trade-off is honest: on short prompts the per-refinement baseline calls can cost *more* than a flat sweep — it pays off once the prompt outgrows a screenful, which is exactly when flat sweeps stop being affordable.
+
 ## CLI workflow
+
+Prefer to be walked through it? `promptlens wizard` is the interactive path: it explains each choice (provider, segmenter, drill-down, scorer, masker, scale, synopsis) with sensible defaults, shows the cost estimate before any provider call, runs the experiment, and prints the equivalent non-interactive `promptlens explain` command so the configured run can be scripted or shared. Bare `promptlens` shows the banner and points to it.
 
 ### Estimate cost
 
@@ -291,6 +341,37 @@ promptlens explain \
   --model gpt-4o-mini \
   --supplementary-rewrites 1
 ```
+
+### Get a synopsis of the evidence
+
+`explain` always prints a **Largest output drifts** table — the concrete outputs the model produced when its most load-bearing features were masked — and exports the same view as `drift_highlights` in the JSON output. `--synopsis` goes one step further: it makes one extra LLM call that hands the full evidence (ranked features with shares and standard errors, the highest-drift examples, the baseline output and its tool path, supplementary mutations) to a model and asks for a short plain-language narrative — what carries the output, what is dead weight, anything surprising, and what to try next.
+
+The synopsis call defaults to the run's provider, but `--synopsis-provider`, `--synopsis-model`, and `--synopsis-base-url` redirect just that one call. Summarizing structured evidence is well within reach of small open-weight models, so the typical setup attributes against the production model and narrates on a local one:
+
+```bash
+promptlens explain \
+  --prompt ./prompt.md \
+  --provider anthropic \
+  --confirm \
+  --synopsis \
+  --synopsis-provider ollama \
+  --synopsis-model llama3.2
+```
+
+From the SDK, the same step is `LLMSynopsisWriter`, which accepts any adapter:
+
+```python
+from promptlens.adapters import OpenAICompatibleAdapter
+from promptlens.reporters import LLMSynopsisWriter
+
+writer = LLMSynopsisWriter(
+    OpenAICompatibleAdapter(model="llama3.2", base_url="http://localhost:11434/v1")
+)
+result = result.with_synopsis(writer.summarize(prompt, result))
+result.print()  # now ends with the synopsis panel
+```
+
+The synopsis is attached to the result (`result.synopsis`), serialized in `to_json()`, and rendered by `print()` — it never replaces the underlying numbers, and the instruction explicitly tells the model not to invent evidence that is not shown.
 
 ### Work with tools
 

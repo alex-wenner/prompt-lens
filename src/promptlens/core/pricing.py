@@ -29,6 +29,7 @@ MODEL_PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "openai/gpt-4o-mini": (0.15, 0.60),
     "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0": (3.00, 15.00),
     "openai-compatible/local": (0.00, 0.00),
+    "ollama/llama3.2": (0.00, 0.00),
 }
 
 # Models whose tokenizer tiktoken knows. Claude is deliberately excluded:

@@ -20,6 +20,7 @@ from promptlens.scorers import (
     LengthDriftScorer,
     OpenAIEmbeddingClient,
     ToolAccuracyScorer,
+    ToolArgumentDriftScorer,
 )
 
 
@@ -249,3 +250,70 @@ def test_scorer_config_must_be_object(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="JSON object"):
         build_scorer("length", config_path=str(config))
+
+
+def test_build_adapter_ollama_defaults_to_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    client = object()
+
+    adapter = build_adapter("ollama", None, temperature=0.0, base_url=None, client=client)
+
+    assert isinstance(adapter, OpenAICompatibleAdapter)
+    assert adapter.model == "llama3.2"
+    assert adapter.base_url == "http://localhost:11434/v1"
+    assert adapter._client is client
+
+
+def test_build_adapter_local_alias_normalizes_ollama_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3")
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.setenv("OLLAMA_HOST", "10.0.0.5:11434")
+
+    adapter = build_adapter("local", None, temperature=0.0, base_url=None, client=object())
+
+    assert isinstance(adapter, OpenAICompatibleAdapter)
+    assert adapter.model == "qwen3"
+    assert adapter.base_url == "http://10.0.0.5:11434/v1"
+
+
+def test_build_scorer_tool_args_defaults() -> None:
+    scorer = build_scorer("tool-args")
+
+    assert isinstance(scorer, ToolArgumentDriftScorer)
+    assert scorer.argument_weight == 0.5
+    assert scorer.none_is_missing is True
+
+
+def test_build_scorer_tool_args_reads_config(tmp_path) -> None:
+    config = tmp_path / "tool-args.json"
+    config.write_text(
+        json.dumps(
+            {
+                "argument_weight": 1.0,
+                "param_weights": {"account_id": 9, "reason": 0},
+                "default_param_weight": 2,
+                "none_is_missing": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    scorer = build_scorer("tool-arguments", config_path=str(config))
+
+    assert isinstance(scorer, ToolArgumentDriftScorer)
+    assert scorer.argument_weight == 1.0
+    assert scorer.param_weights == {"account_id": 9.0, "reason": 0.0}
+    assert scorer.default_param_weight == 2.0
+    assert scorer.none_is_missing is False
+
+
+def test_build_scorer_tool_args_rejects_bad_config(tmp_path) -> None:
+    config = tmp_path / "tool-args.json"
+    config.write_text(json.dumps({"param_weights": {"q": "heavy"}}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="param_weights"):
+        build_scorer("tool-args", config_path=str(config))

@@ -8,10 +8,21 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from promptlens.core.base import Coalition, CompletionOutput, Feature
 
 _MAX_BAR_WIDTH = 20
+
+
+def _plain(text: str) -> Text:
+    """Render model/prompt-derived text literally.
+
+    Dynamic text flows from prompts and model outputs; rendered as a plain
+    string, rich would parse bracketed tokens like ``[blocker]`` or
+    ``[section_2]`` as console markup and silently delete them from tables.
+    """
+    return Text(text)
 
 
 class CostEstimate(BaseModel):
@@ -126,6 +137,19 @@ class SupplementaryEvaluation(BaseModel):
         }
 
 
+class Synopsis(BaseModel):
+    """An LLM-written narrative summary of attribution evidence."""
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str
+    model: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"text": self.text, "model": self.model, "metadata": self.metadata}
+
+
 class AttributionResult(BaseModel):
     """Rich attribution output for SDK and CLI consumers."""
 
@@ -136,6 +160,33 @@ class AttributionResult(BaseModel):
     evaluations: list[CoalitionEvaluation]
     cost_estimate: CostEstimate | None = None
     supplementary_evaluations: list[SupplementaryEvaluation] = Field(default_factory=list)
+    synopsis: Synopsis | None = None
+
+    def with_synopsis(self, synopsis: Synopsis) -> AttributionResult:
+        """Return a copy of this result with an attached synopsis."""
+        return self.model_copy(update={"synopsis": synopsis})
+
+    def drift_highlights(self, limit: int = 3) -> list[dict[str, Any]]:
+        """Return the highest-drift coalition evaluations with the features they masked.
+
+        Each entry names the features that were removed, the resulting score,
+        and the output the model produced without them — the concrete "what
+        actually changed" evidence behind the attribution numbers.
+        """
+        names = [attribution.feature.name for attribution in self.attributions]
+        ordered = sorted(self.evaluations, key=lambda item: item.score, reverse=True)
+        return [
+            {
+                "removed": [
+                    names[index]
+                    for index, included in enumerate(evaluation.coalition)
+                    if not included and index < len(names)
+                ],
+                "score": evaluation.score,
+                "output_text": evaluation.output.text,
+            }
+            for evaluation in ordered[:limit]
+        ]
 
     def ranked(self) -> list[tuple[FeatureAttribution, float]]:
         """Return attributions sorted by importance with each one's normalized share.
@@ -168,6 +219,8 @@ class AttributionResult(BaseModel):
                 evaluation.to_dict() for evaluation in self.supplementary_evaluations
             ],
             "cost_estimate": self.cost_estimate.to_dict() if self.cost_estimate else None,
+            "drift_highlights": self.drift_highlights(),
+            "synopsis": self.synopsis.to_dict() if self.synopsis else None,
         }
 
     def to_json(self) -> str:
@@ -183,13 +236,26 @@ class AttributionResult(BaseModel):
         for attribution, share in self.ranked():
             bar = "█" * round(share * _MAX_BAR_WIDTH)
             table.add_row(
-                attribution.feature.name,
+                _plain(attribution.feature.name),
                 f"{attribution.value:.4f}",
                 f"{share * 100:.1f}%",
                 bar,
-                attribution.feature.text.replace("\n", " ")[:80],
+                _plain(attribution.feature.text.replace("\n", " ")[:80]),
             )
         Console().print(table)
+        highlights = self.drift_highlights()
+        if highlights:
+            highlight_table = Table(title="Largest output drifts")
+            highlight_table.add_column("Removed features")
+            highlight_table.add_column("Score", justify="right")
+            highlight_table.add_column("Output without them")
+            for highlight in highlights:
+                highlight_table.add_row(
+                    _plain(", ".join(highlight["removed"]) or "(none)"),
+                    f"{highlight['score']:.4f}",
+                    _plain(highlight["output_text"].replace("\n", " ")[:80]),
+                )
+            Console().print(highlight_table)
         if self.supplementary_evaluations:
             supplementary_table = Table(title="Supplementary prompt mutations")
             supplementary_table.add_column("Kind")
@@ -198,12 +264,86 @@ class AttributionResult(BaseModel):
             supplementary_table.add_column("Prompt")
             for evaluation in self.supplementary_evaluations:
                 supplementary_table.add_row(
-                    evaluation.kind,
-                    evaluation.feature.name if evaluation.feature else "",
+                    _plain(evaluation.kind),
+                    _plain(evaluation.feature.name if evaluation.feature else ""),
                     f"{evaluation.score:.4f}",
-                    evaluation.prompt.replace("\n", " ")[:80],
+                    _plain(evaluation.prompt.replace("\n", " ")[:80]),
                 )
             Console().print(supplementary_table)
+        if self.synopsis:
+            synopsis_table = Table(
+                title=_plain(f"Synopsis ({self.synopsis.model})"), show_lines=True
+            )
+            synopsis_table.add_column("Summary")
+            synopsis_table.add_row(_plain(self.synopsis.text))
+            Console().print(synopsis_table)
+
+
+class DrilldownRefinement(BaseModel):
+    """Fine-grained attribution within one coarse feature of a drill-down run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    feature: Feature
+    result: AttributionResult
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"feature": self.feature.model_dump(), "result": self.result.to_dict()}
+
+
+class DrilldownResult(BaseModel):
+    """Coarse-to-fine attribution: a section overview plus refined hot spots.
+
+    Produced by :func:`promptlens.core.drilldown.explain_drilldown`. The
+    ``overview`` attributes the prompt at coarse granularity (sections or
+    paragraphs); each refinement re-attributes the sentences of one
+    high-attribution coarse feature while the rest of the prompt stays intact.
+    ``provider_calls_used`` versus ``flat_sweep_provider_calls`` shows what the
+    two-stage pass saved over masking every sentence of the prompt one at a
+    time.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    overview: AttributionResult
+    refinements: list[DrilldownRefinement]
+    provider_calls_used: int
+    flat_sweep_provider_calls: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "overview": self.overview.to_dict(),
+            "refinements": [refinement.to_dict() for refinement in self.refinements],
+            "provider_calls_used": self.provider_calls_used,
+            "flat_sweep_provider_calls": self.flat_sweep_provider_calls,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+
+    def print(self) -> None:
+        self.overview.print()
+        for refinement in self.refinements:
+            table = Table(title=_plain(f"Refined: {refinement.feature.name}"))
+            table.add_column("Feature")
+            table.add_column("Value", justify="right")
+            table.add_column("Share", justify="right")
+            table.add_column("Weight")
+            table.add_column("Text")
+            for attribution, share in refinement.result.ranked():
+                bar = "█" * round(share * _MAX_BAR_WIDTH)
+                table.add_row(
+                    _plain(attribution.feature.name),
+                    f"{attribution.value:.4f}",
+                    f"{share * 100:.1f}%",
+                    bar,
+                    _plain(attribution.feature.text.replace("\n", " ")[:80]),
+                )
+            Console().print(table)
+        Console().print(
+            f"Drill-down used {self.provider_calls_used} provider calls vs "
+            f"~{self.flat_sweep_provider_calls} for a flat sentence sweep."
+        )
 
 
 class PerQuestionAttribution(BaseModel):
@@ -249,13 +389,15 @@ class PerQuestionAttribution(BaseModel):
         table.add_column("Feature")
         for question in self.questions:
             label = question.replace("\n", " ")
-            table.add_column(label[:40] + ("…" if len(label) > 40 else ""), justify="right")
+            table.add_column(
+                _plain(label[:40] + ("…" if len(label) > 40 else "")), justify="right"
+            )
         matrix = self.share_matrix()
         ordered = sorted(
             matrix.items(), key=lambda item: max(item[1], default=0.0), reverse=True
         )
         for feature_name, shares in ordered:
-            table.add_row(feature_name, *[f"{share * 100:.1f}%" for share in shares])
+            table.add_row(_plain(feature_name), *[f"{share * 100:.1f}%" for share in shares])
         Console().print(table)
 
 
@@ -284,8 +426,8 @@ class OptimizationResult(BaseModel):
         table = Table(title="promptlens Optimization", show_lines=True)
         table.add_column("Field")
         table.add_column("Value")
-        table.add_row("original prompt", self.original_prompt)
-        table.add_row("proposed prompt", self.proposed_prompt)
+        table.add_row("original prompt", _plain(self.original_prompt))
+        table.add_row("proposed prompt", _plain(self.proposed_prompt))
         if self.rationale:
-            table.add_row("rationale", self.rationale)
+            table.add_row("rationale", _plain(self.rationale))
         Console().print(table)

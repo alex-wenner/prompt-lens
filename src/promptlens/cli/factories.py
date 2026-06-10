@@ -29,6 +29,7 @@ from promptlens.scorers import (
     LogprobScorer,
     OpenAIEmbeddingClient,
     ToolAccuracyScorer,
+    ToolArgumentDriftScorer,
     ToolSequenceDriftScorer,
 )
 
@@ -41,6 +42,7 @@ _DEFAULT_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
         ("AWS_BEDROCK_MODEL_ID", "BEDROCK_MODEL_ID"),
     ),
     "openai-compatible": ("local", ("OPENAI_COMPATIBLE_MODEL", "OPENAI_MODEL")),
+    "ollama": ("llama3.2", ("OLLAMA_MODEL",)),
 }
 
 
@@ -87,6 +89,7 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "google": "gemini",
     "github": "copilot",
     "github-copilot": "copilot",
+    "local": "ollama",
 }
 
 # Base number of random coalitions at scale "quick"; larger scales multiply it.
@@ -125,7 +128,7 @@ def build_adapter(
 
     ``use_batch_api`` opts OpenAI and Anthropic adapters into their native batch
     APIs (cheaper, asynchronous). It is ignored by providers without batch
-    support (echo, bedrock, copilot, grok, gemini, openai-compatible).
+    support (echo, bedrock, copilot, grok, gemini, ollama, openai-compatible).
     """
     provider_key = provider.strip().lower()
     provider_key = _PROVIDER_ALIASES.get(provider_key, provider_key)
@@ -154,6 +157,14 @@ def build_adapter(
         )
     if provider_key == "bedrock":
         return BedrockAdapter(model=model_id, temperature=temperature, client=client)
+    if provider_key == "ollama":
+        return OpenAICompatibleAdapter(
+            model=model_id,
+            base_url=_ollama_base_url(base_url),
+            api_key=os.environ.get("OLLAMA_API_KEY", "ollama"),
+            temperature=temperature,
+            client=client,
+        )
     if provider_key == "openai-compatible":
         endpoint = (
             base_url
@@ -218,6 +229,24 @@ def _build_sdk_provider_adapter(
     )
 
 
+def _ollama_base_url(base_url: str | None) -> str:
+    """Resolve the Ollama OpenAI-compatible endpoint, defaulting to localhost.
+
+    ``OLLAMA_BASE_URL`` should be the full ``/v1`` endpoint; ``OLLAMA_HOST``
+    follows the Ollama CLI convention (host[:port], scheme optional) and gets
+    normalized to an OpenAI-compatible URL.
+    """
+    endpoint = base_url or os.environ.get("OLLAMA_BASE_URL")
+    if endpoint:
+        return endpoint
+    host = os.environ.get("OLLAMA_HOST")
+    if host:
+        if "://" not in host:
+            host = f"http://{host}"
+        return host.rstrip("/") + "/v1"
+    return "http://localhost:11434/v1"
+
+
 def _first_env(env_names: Sequence[str]) -> str | None:
     for env_name in env_names:
         value = os.environ.get(env_name)
@@ -272,6 +301,8 @@ def build_scorer(name: str, *, config_path: str | None = None) -> Scorer:
         return LogprobScorer()
     if scorer_key in {"tool-sequence", "trajectory"}:
         return ToolSequenceDriftScorer()
+    if scorer_key in {"tool-args", "tool-arguments"}:
+        return _build_tool_argument_scorer(config)
     if scorer_key in {"tool-call", "tool-accuracy"}:
         expected_tool = config.get("expected_tool")
         if not isinstance(expected_tool, str) or not expected_tool:
@@ -347,6 +378,44 @@ def _build_embedding_client(config: dict[str, Any]) -> Any:
         return OpenAIEmbeddingClient(model=model or "local", base_url=base_url)
     msg = f"Unsupported embedding scorer provider: {provider}"
     raise ValueError(msg)
+
+
+def _build_tool_argument_scorer(config: dict[str, Any]) -> ToolArgumentDriftScorer:
+    """Build the argument-aware tool drift scorer from optional JSON config.
+
+    Supported keys: ``argument_weight`` (float in [0, 1]), ``param_weights``
+    (object of parameter name -> non-negative weight), ``default_param_weight``
+    (float), and ``none_is_missing`` (bool).
+    """
+    argument_weight = config.get("argument_weight", 0.5)
+    default_param_weight = config.get("default_param_weight", 1.0)
+    if not isinstance(argument_weight, (int, float)) or isinstance(argument_weight, bool):
+        msg = "tool-args scorer argument_weight must be a number"
+        raise ValueError(msg)
+    if not isinstance(default_param_weight, (int, float)) or isinstance(
+        default_param_weight, bool
+    ):
+        msg = "tool-args scorer default_param_weight must be a number"
+        raise ValueError(msg)
+    param_weights = config.get("param_weights", {})
+    if not isinstance(param_weights, Mapping) or not all(
+        isinstance(name, str)
+        and isinstance(weight, (int, float))
+        and not isinstance(weight, bool)
+        for name, weight in param_weights.items()
+    ):
+        msg = "tool-args scorer param_weights must map parameter names to numbers"
+        raise ValueError(msg)
+    none_is_missing = config.get("none_is_missing", True)
+    if not isinstance(none_is_missing, bool):
+        msg = "tool-args scorer none_is_missing must be a boolean"
+        raise ValueError(msg)
+    return ToolArgumentDriftScorer(
+        argument_weight=float(argument_weight),
+        param_weights={name: float(weight) for name, weight in param_weights.items()},
+        default_param_weight=float(default_param_weight),
+        none_is_missing=none_is_missing,
+    )
 
 
 def _required_args_from_config(config: dict[str, Any]) -> list[str]:
