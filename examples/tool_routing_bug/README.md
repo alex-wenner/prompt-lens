@@ -3,7 +3,7 @@
 **Problem:** an agent keeps calling the wrong tool, and you don't know which
 part of its instructions is responsible.
 
-This example simulates a support agent with two tools (`lookup_order` and
+This example runs a support agent with two tools (`lookup_order` and
 `search_catalog`). The agent should answer *"where is my recent purchase?"* by
 calling `lookup_order`, but it only routes correctly when it can still see the
 order-id hint in the `order_reference` description. promptlens pinpoints that one
@@ -16,31 +16,64 @@ metric proves the fix.
 python examples/tool_routing_bug/run.py
 ```
 
-By default this calls a **real provider** with real tool schemas. Set
-`OPENAI_API_KEY` (or `ANTHROPIC_API_KEY` plus
-`PROMPTLENS_EXAMPLE_PROVIDER=anthropic`) to choose the model;
-`PROMPTLENS_EXAMPLE_MODEL` overrides the default model. With no credential set it
-falls back to a small deterministic simulated adapter, so it still runs offline
-and as a CI smoke test.
+This calls a **real provider** with real tool schemas. Export `OPENAI_API_KEY`
+(or `ANTHROPIC_API_KEY` plus `PROMPTLENS_EXAMPLE_PROVIDER=anthropic`) to choose
+the model; `PROMPTLENS_EXAMPLE_MODEL` overrides the default model. The run
+prints the full tool table the model sees (names, docstrings, parameter names,
+types, and descriptions), the model's tool calls, and — after executing the
+chosen tool against a stub backend — the model's final answer to the tool
+result, so the whole agent loop is visible.
 
-## What you should see
+## Example output
 
-With the offline fallback, attribution over the healthy prompt ranks the
-order-id sentence at the top because masking it is the only change that collapses
-tool accuracy (a real model will vary, but should still surface that sentence):
+Attribution over the healthy prompt ranks the order-id sentence at the top
+because masking it is the only change that collapses tool accuracy (exact
+numbers vary by model, but it should surface that sentence):
 
-| Feature      | Share  | Meaning                                         |
-| ------------ | ------ | ----------------------------------------------- |
-| `sentence_3` | 100.0% | The `order_reference` order-id description       |
-| `sentence_1` | 0.0%   | "You are a support agent…" (dead weight)        |
-| `sentence_2` | 0.0%   | "Call lookup_order when…" (dead weight here)    |
-| `sentence_4` | 0.0%   | "Call search_catalog only when…" (dead weight)  |
+```text
+                          Tools exposed to the model
+┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Tool           ┃ Description                          ┃ Parameters                         ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ lookup_order   │ Look up the status of an existing    │ order_reference: string (required) │
+│                │ customer order.                      │   Identifier for the customer's    │
+│                │                                      │   existing purchase.               │
+├────────────────┼──────────────────────────────────────┼────────────────────────────────────┤
+│ search_catalog │ Search the product catalog for items │ query: string (required)           │
+│                │ to buy.                              │   What the customer wants to buy.  │
+└────────────────┴──────────────────────────────────────┴────────────────────────────────────┘
+    Baseline routing decision — tool calls
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Tool         ┃ Arguments                    ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ lookup_order │ {"order_reference": "#1234"} │
+└──────────────┴──────────────────────────────┘
+╭──────────────── Model's answer after the tool result ─────────────────╮
+│ Your order #1234 shipped two days ago via UPS and should arrive       │
+│ tomorrow. Tracking number: 1Z999AA10123456784.                        │
+╰────────────────────────── usage: 77 in / 26 out ──────────────────────╯
 
-Then the task metric confirms the diagnosis:
+                          promptlens Attribution
+┏━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Feature    ┃  Value ┃  Share ┃ Weight               ┃ Text                                  ┃
+┡━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ sentence_3 │ 1.0000 │ 100.0% │ ████████████████████ │ The order_reference parameter is the  │
+│            │        │        │                      │ customer's order ID, for example      │
+│            │        │        │                      │ #1234.                                │
+│ sentence_1 │ 0.0000 │   0.0% │                      │ You are a support agent with two      │
+│            │        │        │                      │ tools.                                │
+│ sentence_2 │ 0.0000 │   0.0% │                      │ Call lookup_order when the user asks  │
+│            │        │        │                      │ about an existing purchase.           │
+│ sentence_4 │ 0.0000 │   0.0% │                      │ Call search_catalog only when the     │
+│            │        │        │                      │ user wants to buy a new product.      │
+└────────────┴────────┴────────┴──────────────────────┴───────────────────────────────────────┘
 
-```
-tool accuracy with the misleading description: 0.00
-tool accuracy after restoring the description: 1.00
+Most load-bearing feature: sentence_3 (100% of attribution mass)
+  -> The order_reference parameter is the customer's order ID, for example #1234.
+
+Diagnosis confirmed by the task metric:
+  tool accuracy with the misleading description: 0.00
+  tool accuracy after restoring the description: 1.00
 ```
 
 ## Why this uses the objective scorer

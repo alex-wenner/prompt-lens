@@ -13,25 +13,47 @@ the two lines that actually shape the output rise to the top.
 python examples/system_prompt_cleanup/run.py
 ```
 
-By default this calls a **real provider**. Set `OPENAI_API_KEY` (or
-`ANTHROPIC_API_KEY` plus `PROMPTLENS_EXAMPLE_PROVIDER=anthropic`) to choose the
-model; `PROMPTLENS_EXAMPLE_MODEL` overrides the default model. With no credential
-set it falls back to a small deterministic simulated adapter whose output is
-shaped only by the "valid JSON" and "confidence score" instructions, so it still
-runs offline and as a CI smoke test.
+This calls a **real provider**. Export `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`
+plus `PROMPTLENS_EXAMPLE_PROVIDER=anthropic`) to choose the model;
+`PROMPTLENS_EXAMPLE_MODEL` overrides the default model. The run first executes
+the real baseline, shows the measured cost projection, then sweeps the prompt.
 
-## What you should see
+## Example output
 
-With the offline fallback (a real model will vary):
+The two formatting instructions carry the measured drift; the friendly
+boilerplate carries none (exact shares vary by model):
 
-| Feature      | Share | Line                                           |
-| ------------ | ----- | ---------------------------------------------- |
-| `sentence_2` | ~58%  | "Always respond in valid JSON."                |
-| `sentence_4` | ~42%  | "Include a confidence score…"                  |
-| others       | 0%    | Polite boilerplate (no measured effect)         |
+```text
+╭──────────────────────────────── Baseline output ────────────────────────────────╮
+│ {"status": "Order shipped.", "answer": "Your order left our warehouse today.",  │
+│  "confidence": 0.92}                                                            │
+╰────────────────────────────── usage: 49 in / 31 out ────────────────────────────╯
 
-The two formatting instructions carry all of the measured drift; the friendly
-boilerplate carries none.
+                          promptlens Attribution
+┏━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Feature    ┃  Value ┃ Share ┃ Weight       ┃ Text                                            ┃
+┡━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ sentence_2 │ 0.4891 │ 57.7% │ ████████████ │ Always respond in valid JSON.                   │
+│ sentence_4 │ 0.3587 │ 42.3% │ ████████     │ Include a confidence score between 0 and 1 for  │
+│            │        │       │              │ your answer.                                    │
+│ sentence_1 │ 0.0000 │  0.0% │              │ You are a friendly and helpful customer support │
+│            │        │       │              │ assistant.                                      │
+│ sentence_3 │ 0.0000 │  0.0% │              │ Be polite and empathetic with every customer.   │
+│ sentence_5 │ 0.0000 │  0.0% │              │ Never share internal company secrets.           │
+│ sentence_6 │ 0.0000 │  0.0% │              │ Remember that the customer is always the hero   │
+│            │        │       │              │ of their own story.                             │
+└────────────┴────────┴───────┴──────────────┴─────────────────────────────────────────────────┘
+
+Load-bearing lines (keep and tighten):
+  - Always respond in valid JSON.
+  - Include a confidence score between 0 and 1 for your answer.
+
+Dead-weight under this scorer (candidates to review, not auto-delete):
+  - You are a friendly and helpful customer support assistant.
+  - Be polite and empathetic with every customer.
+  - Never share internal company secrets.
+  - Remember that the customer is always the hero of their own story.
+```
 
 ## Using a semantic scorer
 
