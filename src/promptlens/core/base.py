@@ -33,6 +33,15 @@ class Feature(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class Usage(BaseModel):
+    """Provider-reported token usage for one completion call."""
+
+    model_config = ConfigDict(frozen=True)
+
+    input_tokens: int
+    output_tokens: int
+
+
 class CompletionOutput(BaseModel):
     """Normalized model output returned by adapters."""
 
@@ -41,6 +50,7 @@ class CompletionOutput(BaseModel):
     text: str
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     logprobs: list[float] | None = None
+    usage: Usage | None = None
     raw: Any | None = None
 
 
@@ -180,6 +190,7 @@ __all__ = [
     "ToolDefinitions",
     "ToolLike",
     "ToolParameter",
+    "Usage",
     "coerce_tools",
     "normalize_coalition",
     "normalize_tool",

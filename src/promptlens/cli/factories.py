@@ -25,9 +25,11 @@ from promptlens.maskers import DropMasker, FillerMasker, PlaceholderMasker
 from promptlens.samplers import LeaveOneOutSampler, RandomCoalitionSampler
 from promptlens.scorers import (
     EmbeddingScorer,
+    HuggingFaceEmbeddingClient,
     LengthDriftScorer,
     LogprobScorer,
     OpenAIEmbeddingClient,
+    TextShapeEmbeddingClient,
     ToolAccuracyScorer,
     ToolArgumentDriftScorer,
     ToolSequenceDriftScorer,
@@ -94,25 +96,6 @@ _PROVIDER_ALIASES: dict[str, str] = {
 
 # Base number of random coalitions at scale "quick"; larger scales multiply it.
 _BASE_RANDOM_COALITIONS = 50
-
-
-class _TextEmbeddingClient:
-    """Deterministic local embedding fallback for offline CLI smoke runs.
-
-    This is **not** a semantic embedding: it derives a few cheap text-shape
-    features without contacting a provider, so it is only useful for smoke tests
-    and demos. Select it explicitly via the ``embedding-local`` scorer name. For
-    real attribution use the ``embedding`` scorer with a provider config.
-    """
-
-    def embed(self, text: str) -> Sequence[float]:
-        """Return simple text-shape features without making provider calls."""
-        char_sum = sum(ord(char) for char in text)
-        return (
-            float(len(text)),
-            float(text.count(" ")),
-            float(char_sum % 997),
-        )
 
 
 def build_adapter(
@@ -291,7 +274,7 @@ def build_scorer(name: str, *, config_path: str | None = None) -> Scorer:
         return LengthDriftScorer()
     if scorer_key in {"embedding-local", "text-shape"}:
         # Explicit opt-in to the deterministic text-shape fallback (offline only).
-        return EmbeddingScorer(_TextEmbeddingClient())
+        return EmbeddingScorer(TextShapeEmbeddingClient())
     if scorer_key == "embedding":
         # Real semantic embeddings require a provider; the offline toy is opt-in
         # under the embedding-local name so plain "embedding" is never mistaken
@@ -351,7 +334,8 @@ def _build_embedding_client(config: dict[str, Any]) -> Any:
     provider = config.get("provider")
     if not isinstance(provider, str) or not provider.strip():
         msg = (
-            "embedding scorer requires scorer config with a 'provider', e.g. "
+            "embedding scorer requires scorer config with a 'provider' "
+            "(openai, openai-compatible, or huggingface), e.g. "
             '{"provider": "openai", "model": "text-embedding-3-small"}. '
             "Use the 'embedding-local' scorer for an offline deterministic fallback."
         )
@@ -363,6 +347,10 @@ def _build_embedding_client(config: dict[str, Any]) -> Any:
         raise ValueError(msg)
     if provider_key == "openai":
         return OpenAIEmbeddingClient(model=model or "text-embedding-3-small")
+    if provider_key == "huggingface":
+        return HuggingFaceEmbeddingClient(
+            model=model or "sentence-transformers/all-MiniLM-L6-v2"
+        )
     if provider_key == "openai-compatible":
         base_url = (
             config.get("base_url")

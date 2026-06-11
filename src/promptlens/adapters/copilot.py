@@ -14,7 +14,7 @@ import threading
 from collections.abc import Coroutine
 from typing import Any
 
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, Usage
 
 
 class CopilotAdapter(Adapter):
@@ -158,4 +158,12 @@ def _event_to_output(event: Any) -> CompletionOutput:
         }
         for request in tool_requests
     ]
-    return CompletionOutput(text=str(text), tool_calls=tool_calls, raw=event)
+    usage_data = getattr(data, "usage", None)
+    input_tokens = getattr(usage_data, "input_tokens", None) if usage_data else None
+    output_tokens = getattr(usage_data, "output_tokens", None) if usage_data else None
+    usage = (
+        Usage(input_tokens=int(input_tokens), output_tokens=int(output_tokens))
+        if input_tokens is not None and output_tokens is not None
+        else None
+    )
+    return CompletionOutput(text=str(text), tool_calls=tool_calls, usage=usage, raw=event)

@@ -26,7 +26,11 @@ def _plain(text: str) -> Text:
 
 
 class CostEstimate(BaseModel):
-    """Estimated spend before provider calls are made."""
+    """Projected spend, derived from one measured baseline completion.
+
+    ``input_tokens``/``output_tokens`` are the baseline call's provider-reported
+    usage multiplied across the baseline plus every perturbation evaluation.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -39,7 +43,6 @@ class CostEstimate(BaseModel):
     output_cost_usd: float
     pricing_updated: str
     comparisons: dict[str, float] = Field(default_factory=dict)
-    token_counter: str = "heuristic"
 
     @property
     def total_usd(self) -> float:
@@ -54,17 +57,22 @@ class CostEstimate(BaseModel):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)
 
     def print(self) -> None:
-        table = Table(title="CostEstimate")
-        table.add_column("Metric")
+        table = Table(
+            title="Estimated cost (projected from the measured baseline call)",
+            title_style="bold cyan",
+            header_style="bold",
+            border_style="cyan",
+        )
+        table.add_column("Metric", style="bold")
         table.add_column("Value", justify="right")
-        table.add_row("model", self.model)
+        table.add_row("model", f"[magenta]{self.model}[/magenta]")
         table.add_row("features", str(self.features))
         table.add_row("evaluations", str(self.evaluations))
-        table.add_row("input tokens", f"{self.input_tokens} ({self.token_counter})")
-        table.add_row("output tokens", str(self.output_tokens))
+        table.add_row("input tokens", f"{self.input_tokens:,}")
+        table.add_row("output tokens", f"{self.output_tokens:,}")
         table.add_row("input cost", f"${self.input_cost_usd:.6f}")
         table.add_row("output cost", f"${self.output_cost_usd:.6f}")
-        table.add_row("total", f"${self.total_usd:.6f}")
+        table.add_row("total", f"[bold green]${self.total_usd:.6f}[/bold green]")
         for model, total in self.comparisons.items():
             table.add_row(f"compare {model}", f"${total:.6f}")
         Console().print(table)

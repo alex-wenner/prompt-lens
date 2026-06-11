@@ -14,16 +14,15 @@ of the prompt intact. Trajectory drift is scored with the argument-aware tool
 scorer (a free-text ``summary`` parameter is weighted to zero so rephrasing
 never counts as drift) blended with output-length drift for the reply envelope.
 
-By default this runs against a **real provider** (set ``OPENAI_API_KEY`` or
-``ANTHROPIC_API_KEY``; see ``examples/_shared.py``). With no credential it
-falls back to a deterministic offline agent whose tool trajectory is governed by
-the same policy sentences a real model would key on, so the example runs
-end-to-end and doubles as a CI smoke test.
+This example makes **real provider calls** (export ``OPENAI_API_KEY``, or pick
+another provider with ``PROMPTLENS_EXAMPLE_PROVIDER``). It prints the full tool
+schemas the model sees, the baseline trajectory, and — after executing the
+called tools against stub backends — the model's final reply to the tool
+results, so the whole agent loop is visible.
 """
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Annotated, Any
@@ -34,7 +33,15 @@ from promptlens.scorers import CompositeScorer, LengthDriftScorer, ToolArgumentD
 from promptlens.segmenters import MarkdownSectionSegmenter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _shared import load_text, print_footer, select_adapter  # noqa: E402
+from _shared import (  # noqa: E402
+    complete_tool_round_trip,
+    console,
+    get_adapter,
+    load_text,
+    print_completion,
+    print_footer,
+    print_tools,
+)
 
 INSTRUCTIONS = load_text(__file__, "instructions.md")
 
@@ -43,15 +50,6 @@ TICKET = (
     "refund of $182.40 on order ORD-7421 — the item arrived damaged. Order "
     "status is delivered; account tier is preferred."
 )
-
-# Policy sentences the offline agent keys on. Each lives in exactly one
-# sentence of instructions.md, so masking that sentence flips the behavior —
-# the same causal link attribution should surface for a real model.
-ESCALATE_SIGNAL = "must be escalated"
-RMA_SIGNAL = "require an rma"
-LOOKUP_SIGNAL = "call lookup_order first"
-AUDIT_SIGNAL = "order_id on every tool call"
-JSON_SIGNAL = "reply to the account manager in json"
 
 
 @tool
@@ -86,6 +84,24 @@ def escalate_to_human(
 
 TOOLS: ToolDefinitions = [lookup_order, create_rma, issue_refund, escalate_to_human]
 
+# Stub backends so the baseline's tool calls can execute, letting the example
+# show the model's final reply to the tool outcomes.
+TOOL_IMPLEMENTATIONS: dict[str, Any] = {
+    "lookup_order": lambda order_id="", **_: (
+        f"{order_id or 'ORD-7421'}: status=delivered, total=$182.40, "
+        "payment=settled, items=1x hydraulic seal kit."
+    ),
+    "create_rma": lambda order_id="", reason_code="", **_: (
+        f"RMA-5530 opened for {order_id or 'ORD-7421'} (reason: {reason_code})."
+    ),
+    "issue_refund": lambda order_id="", amount=0.0, **_: (
+        f"Refund of ${amount:.2f} queued for {order_id or 'ORD-7421'}."
+    ),
+    "escalate_to_human": lambda order_id="", reason_code="", summary="", **_: (
+        f"Ticket for {order_id or 'ORD-7421'} queued for human review ({reason_code})."
+    ),
+}
+
 
 class TicketedAdapter(Adapter):
     """Append the fixed ticket to every (masked) instruction set.
@@ -101,62 +117,6 @@ class TicketedAdapter(Adapter):
 
     def complete(self, prompt: str, tools: ToolDefinitions | None = None) -> CompletionOutput:
         return self.inner.complete(f"{prompt}\n\n# Ticket\n\n{TICKET}", tools=tools)
-
-
-class SimulatedOrderOpsAgent(Adapter):
-    """Offline fallback: a trajectory governed by the visible policy sentences.
-
-    Reads the masked instruction text the harness actually sends and follows
-    whatever policy survives — exactly the dependency structure attribution is
-    supposed to recover. The ticket is a $182.40 damaged-item refund, so the
-    escalation threshold, the RMA prerequisite, the lookup-first rule, the
-    order_id audit rule, and the JSON output contract each control one
-    observable piece of the run.
-    """
-
-    def __init__(self) -> None:
-        self.model = "simulated-order-ops-agent"
-
-    def complete(self, prompt: str, tools: ToolDefinitions | None = None) -> CompletionOutput:
-        del tools
-        visible = prompt.lower()
-        audited = AUDIT_SIGNAL in visible
-
-        def arguments(**kwargs: Any) -> dict[str, Any]:
-            return {"order_id": "ORD-7421", **kwargs} if audited else kwargs
-
-        calls: list[dict[str, Any]] = []
-        if LOOKUP_SIGNAL in visible:
-            calls.append({"name": "lookup_order", "arguments": arguments()})
-        if RMA_SIGNAL in visible:
-            calls.append(
-                {"name": "create_rma", "arguments": arguments(reason_code="damaged_in_transit")}
-            )
-        if ESCALATE_SIGNAL in visible:
-            calls.append(
-                {
-                    "name": "escalate_to_human",
-                    "arguments": arguments(
-                        reason_code="refund_over_limit",
-                        summary="Refund of $182.40 exceeds the $100 direct-refund limit.",
-                    ),
-                }
-            )
-            action, status = "escalated_to_reviewer", "pending_review"
-        else:
-            calls.append({"name": "issue_refund", "arguments": arguments(amount=182.40)})
-            action, status = "refund_issued", "resolved"
-        if JSON_SIGNAL in visible:
-            text = json.dumps(
-                {
-                    "status": status,
-                    "action_taken": action,
-                    "next_step": "Reply to Dana with the outcome.",
-                }
-            )
-        else:
-            text = f"Handled the Helio Manufacturing ticket: {action}."
-        return CompletionOutput(text=text, tool_calls=calls)
 
 
 def build_scorer() -> CompositeScorer:
@@ -176,15 +136,29 @@ def build_scorer() -> CompositeScorer:
 
 def main(adapter: Adapter | None = None) -> dict[str, Any]:
     """Run the demo and return the headline numbers for inspection and tests."""
-    inner = adapter if adapter is not None else select_adapter(SimulatedOrderOpsAgent())
+    inner = adapter if adapter is not None else get_adapter()
+    ticketed = TicketedAdapter(inner)
+    print_tools(TOOLS)
+
     harness = AttributionHarness(
-        adapter=TicketedAdapter(inner),
+        adapter=ticketed,
         segmenter=MarkdownSectionSegmenter(),
         scorer=build_scorer(),
     )
-    result = explain_drilldown(harness, INSTRUCTIONS, tools=TOOLS, top_k=2)
 
-    print("Coarse-to-fine attribution over the Atlas instruction set:\n")
+    baseline, estimate = harness.estimate(INSTRUCTIONS, tools=TOOLS)
+    print_completion("Baseline trajectory", baseline)
+    estimate.print()
+
+    # Close the agent loop: execute the called tools, show the final reply.
+    final = complete_tool_round_trip(
+        ticketed, INSTRUCTIONS, baseline, TOOL_IMPLEMENTATIONS, TOOLS
+    )
+    if final is not None:
+        print_completion("Model's reply after the tool results", final)
+
+    console.print("\n[bold]Coarse-to-fine attribution over the Atlas instruction set[/bold]\n")
+    result = explain_drilldown(harness, INSTRUCTIONS, tools=TOOLS, top_k=2, baseline=baseline)
     result.print()
 
     headings = {
@@ -198,12 +172,12 @@ def main(adapter: Adapter | None = None) -> dict[str, Any]:
         refinement.feature.name: refinement.result.ranked()[0][0].feature.text
         for refinement in result.refinements
     }
-    print("\nWhat drill-down found:")
+    console.print("\n[bold]What drill-down found:[/bold]")
     for name, top_sentence in refined.items():
-        print(f"  {headings[name]} -> {top_sentence}")
-    print(
-        f"\nProvider calls: {result.provider_calls_used} with drill-down vs "
-        f"~{result.flat_sweep_provider_calls} for a flat sentence sweep."
+        console.print(f"  {headings[name]} -> {top_sentence}")
+    console.print(
+        f"\nProvider calls: [green]{result.provider_calls_used}[/green] with drill-down vs "
+        f"~[red]{result.flat_sweep_provider_calls}[/red] for a flat sentence sweep."
     )
     print_footer(
         "drill-down finds the sentences that drive the trajectory; confirm policy "

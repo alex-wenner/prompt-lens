@@ -23,6 +23,7 @@ from collections.abc import Sequence
 
 from promptlens.core.base import (
     Coalition,
+    CompletionOutput,
     Feature,
     Masker,
     Segmenter,
@@ -40,6 +41,7 @@ def explain_drilldown(
     *,
     top_k: int = 2,
     fine_segmenter: Segmenter | None = None,
+    baseline: CompletionOutput | None = None,
 ) -> DrilldownResult:
     """Run coarse attribution, then refine the hottest features sentence by sentence.
 
@@ -58,7 +60,7 @@ def explain_drilldown(
         msg = f"top_k must be >= 0, got {top_k}"
         raise ValueError(msg)
     fine = fine_segmenter or SentenceSegmenter()
-    overview = harness.explain(prompt, tools=tools)
+    overview = harness.explain(prompt, tools=tools, baseline=baseline)
     refinements: list[DrilldownRefinement] = []
     for attribution, _ in overview.ranked():
         if len(refinements) >= top_k:

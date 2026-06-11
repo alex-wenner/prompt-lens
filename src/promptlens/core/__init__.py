@@ -10,10 +10,11 @@ from promptlens.core.base import (
     Sampler,
     Scorer,
     Segmenter,
+    Usage,
 )
 from promptlens.core.drilldown import explain_drilldown
 from promptlens.core.harness import AttributionHarness
-from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK, estimate_cost, estimate_tokens
+from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK, estimate_cost_from_baseline
 from promptlens.core.result import (
     AttributionResult,
     CoalitionEvaluation,
@@ -60,12 +61,12 @@ __all__ = [
     "SupplementaryEvaluation",
     "Synopsis",
     "Tool",
+    "Usage",
     "ToolDefinitions",
     "ToolLike",
     "ToolParameter",
     "coerce_tools",
-    "estimate_cost",
-    "estimate_tokens",
+    "estimate_cost_from_baseline",
     "explain_drilldown",
     "tool",
 ]

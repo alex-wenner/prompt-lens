@@ -14,6 +14,7 @@ def test_explain_provider_echo_still_runs() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
         ],
     )
 
@@ -33,6 +34,7 @@ def test_explain_accepts_scorer_and_sampler_flags(tmp_path) -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--sampler",
             "leave-one-out",
             "--scorer",
@@ -57,6 +59,7 @@ def test_explain_can_include_supplementary_rewrites(tmp_path) -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--supplementary-rewrites",
             "1",
             "--output",
@@ -82,6 +85,7 @@ def test_optimize_command_runs_with_echo(tmp_path) -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--output",
             str(output),
         ],
@@ -109,7 +113,7 @@ def test_explain_dry_run_estimates_without_running() -> None:
     )
 
     assert result.exit_code == 0
-    assert "CostEstimate" in result.output
+    assert "Estimated cost" in result.output
     assert "promptlens Attribution" not in result.output
 
 
@@ -122,13 +126,12 @@ def test_explain_confirm_aborts_on_no() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
-            "--confirm",
         ],
         input="n\n",
     )
 
     assert result.exit_code != 0
-    assert "CostEstimate" in result.output
+    assert "Estimated cost" in result.output
     assert "promptlens Attribution" not in result.output
 
 
@@ -141,13 +144,30 @@ def test_explain_confirm_runs_on_yes() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
-            "--confirm",
         ],
         input="y\n",
     )
 
     assert result.exit_code == 0
-    assert "CostEstimate" in result.output
+    assert "Estimated cost" in result.output
+    assert "promptlens Attribution" in result.output
+
+
+def test_explain_yes_skips_confirmation() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Estimated cost" in result.output
     assert "promptlens Attribution" in result.output
 
 
@@ -160,6 +180,7 @@ def test_auto_segmenter_picks_sections_for_markdown() -> None:
             "# Role\nBe concise.\n\n# Task\nSummarize.",
             "--provider",
             "echo",
+            "--yes",
             "--segmenter",
             "auto",
         ],
@@ -180,6 +201,7 @@ def test_explain_synopsis_attaches_llm_summary(tmp_path) -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--synopsis",
             "--output",
             str(output),
@@ -204,6 +226,7 @@ def test_explain_richer_output_shows_drift_highlights() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
         ],
     )
 
@@ -220,6 +243,7 @@ def test_explain_accepts_tool_args_scorer() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--scorer",
             "tool-args",
         ],
@@ -254,6 +278,7 @@ def test_explain_drilldown_refines_top_sections(tmp_path) -> None:
             str(prompt),
             "--provider",
             "echo",
+            "--yes",
             "--drilldown",
             "--output",
             str(output),

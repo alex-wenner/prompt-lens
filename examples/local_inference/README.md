@@ -14,25 +14,44 @@ call.
 ## Run it
 
 ```bash
-# Offline (deterministic fallback) — no server needed
-python examples/local_inference/run.py
+# Against your local Ollama server (default http://localhost:11434)
+PROMPTLENS_EXAMPLE_MODEL=llama3.2 python examples/local_inference/run.py
 
-# For real, against a running Ollama server
-PROMPTLENS_EXAMPLE_PROVIDER=ollama \
-  PROMPTLENS_EXAMPLE_MODEL=llama3.2 \
-  python examples/local_inference/run.py
+# Or against a hosted provider instead
+PROMPTLENS_EXAMPLE_PROVIDER=openai python examples/local_inference/run.py
 ```
 
-With no `PROMPTLENS_EXAMPLE_PROVIDER=ollama` opt-in it uses a deterministic
-offline model whose output length is shaped by the two formatting paragraphs
-(severity tags and the markdown-checklist format), so the run is reproducible
-and works in CI.
+This example defaults to the local `ollama` provider, so it needs a running
+Ollama server (no API key). Point `PROMPTLENS_EXAMPLE_PROVIDER` at a hosted
+provider to run it against an API instead.
 
-## What you should see
+## Example output
 
 The two formatting paragraphs carry the measured drift; the role framing and
 the terse-tone line score ~0% under a length scorer. The synopsis panel then
-narrates that in plain language — written by the same local model.
+narrates that in plain language — written by the same local model:
+
+```text
+                          promptlens Attribution
+┏━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Feature     ┃  Value ┃ Share ┃ Weight      ┃ Text                                        ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ paragraph_3 │ 0.5354 │ 54.6% │ ███████████ │ When you find issues, tag each one with a   │
+│             │        │       │             │ severity of blocker, warn, or nit …         │
+│ paragraph_4 │ 0.4458 │ 45.4% │ █████████   │ Format your review as a markdown checklist │
+│             │        │       │             │ grouped by file …                           │
+│ paragraph_1 │ 0.0000 │  0.0% │             │ You are a senior code reviewer for a       │
+│             │        │       │             │ Python platform team …                      │
+│ paragraph_2 │ 0.0000 │  0.0% │             │ Keep your tone terse and factual …          │
+└─────────────┴────────┴───────┴─────────────┴─────────────────────────────────────────────┘
+                       Synopsis (llama3.2)
+┌──────────────────────────────────────────────────────────────────┐
+│ The severity-tagging and markdown-checklist paragraphs carry the │
+│ output; together they account for nearly all measured drift. The │
+│ role framing and the terse-tone line are inert under a length    │
+│ scorer for this diff.                                            │
+└──────────────────────────────────────────────────────────────────┘
+```
 
 ## Lens, not oracle
 

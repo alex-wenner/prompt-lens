@@ -66,7 +66,7 @@ def test_estimate_supports_model_comparisons() -> None:
         scorer=LengthDriftScorer(),
     )
 
-    estimate = harness.estimate("One. Two.", compare_models=["openai/gpt-4o-mini"])
+    _, estimate = harness.estimate("One. Two.", compare_models=["openai/gpt-4o-mini"])
 
     assert estimate.features == 2
     assert "openai/gpt-4o-mini" in estimate.comparisons

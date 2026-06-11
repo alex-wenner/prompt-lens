@@ -12,6 +12,7 @@ license = "MIT"
 authors = [{ name = "promptlens contributors" }]
 dependencies = [
   "numpy>=1.26",
+  "prompt-toolkit>=3.0",
   "pydantic>=2.7",
   "rich>=13.7",
   "typer>=0.12",
@@ -19,21 +20,22 @@ dependencies = [
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.39"]
-openai = ["openai>=1.54", "tiktoken>=0.7"]
+openai = ["openai>=1.54"]
 bedrock = ["boto3>=1.35"]
 copilot = ["github-copilot-sdk>=1.0"]
 grok = ["xai-sdk>=1.0"]
 gemini = ["google-genai>=1.0"]
+huggingface = ["sentence-transformers>=3.0"]
 shap = ["shap>=0.46"]
 dev = ["pytest>=8.2", "ruff>=0.6", "mypy>=1.11"]
 all = [
   "anthropic>=0.39",
   "openai>=1.54",
-  "tiktoken>=0.7",
   "boto3>=1.35",
   "github-copilot-sdk>=1.0",
   "xai-sdk>=1.0",
   "google-genai>=1.0",
+  "sentence-transformers>=3.0",
   "shap>=0.46",
 ]
 
@@ -60,5 +62,5 @@ testpaths = ["tests"]
 markers = ["slow: requires live provider credentials"]
 
 [[tool.mypy.overrides]]
-module = ["anthropic", "boto3", "openai", "tiktoken", "copilot", "copilot.*", "xai_sdk", "xai_sdk.*", "google", "google.genai", "google.genai.*"]
+module = ["anthropic", "boto3", "openai", "copilot", "copilot.*", "sentence_transformers", "sentence_transformers.*", "xai_sdk", "xai_sdk.*", "google", "google.genai", "google.genai.*"]
 ignore_missing_imports = true
