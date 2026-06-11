@@ -7,11 +7,11 @@ instruction prompt. promptlens masks each sentence in turn and measures how the
 agent's tool choice changes, surfacing the one sentence that actually drives the
 routing decision.
 
-By default this runs against a **real provider** (set ``OPENAI_API_KEY`` or
-``ANTHROPIC_API_KEY``; see ``examples/_shared.py`` for the env vars). When
-no credential is available it falls back to a deterministic offline adapter that
-routes to ``lookup_order`` only while the order-id hint survives, so the example
-still runs end-to-end and doubles as a CI smoke test.
+This example makes **real provider calls** (export ``OPENAI_API_KEY``, or pick
+another provider with ``PROMPTLENS_EXAMPLE_PROVIDER``). It prints the full tool
+schemas the model sees, the model's tool calls, and — after executing the chosen
+tool — the model's final answer to the tool result, so the whole agent loop is
+visible.
 
 Attribution is a lens, not an oracle: it points at the load-bearing text so you
 know *where* to look, and the before/after task metric is what proves the fix.
@@ -29,12 +29,14 @@ from promptlens.scorers import ToolAccuracyScorer
 from promptlens.segmenters import SentenceSegmenter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _shared import print_footer, select_adapter  # noqa: E402
-
-# The offline fallback model routes to lookup_order only when this hint survives
-# in the prompt. It appears in exactly one sentence: the order_reference
-# description.
-ROUTING_SIGNAL = "order id"
+from _shared import (  # noqa: E402
+    complete_tool_round_trip,
+    console,
+    get_adapter,
+    print_completion,
+    print_footer,
+    print_tools,
+)
 
 GOOD_DESCRIPTION = "The order_reference parameter is the customer's order ID, for example #1234."
 MISLEADING_DESCRIPTION = "The order_reference parameter is a product search keyword."
@@ -52,8 +54,7 @@ MISLEADING_PROMPT = _PROMPT_TEMPLATE.format(description=MISLEADING_DESCRIPTION)
 
 
 # Tools are declared once with the provider-neutral ``@tool`` decorator; the
-# active adapter coerces each ``Tool`` into its provider's schema. The offline
-# adapter ignores them and routes from the prompt text alone.
+# active adapter coerces each ``Tool`` into its provider's schema.
 @tool
 def lookup_order(
     order_reference: Annotated[str, "Identifier for the customer's existing purchase."],
@@ -68,28 +69,15 @@ def search_catalog(query: Annotated[str, "What the customer wants to buy."]) -> 
 
 TOOLS: ToolDefinitions = [lookup_order, search_catalog]
 
-
-class SimulatedRoutingAgent(Adapter):
-    """Offline fallback: route to ``lookup_order`` only when the order-id hint is visible.
-
-    The decision is made from the prompt text the harness actually sends, so when
-    promptlens masks the order-id sentence the hint disappears and routing flips,
-    exactly as a real model would lose the cue.
-    """
-
-    def __init__(self) -> None:
-        self.model = "simulated-routing-agent"
-
-    def complete(self, prompt: str, tools: ToolDefinitions | None = None) -> CompletionOutput:
-        del tools
-        if ROUTING_SIGNAL in prompt.lower():
-            tool_call: dict[str, Any] = {
-                "name": "lookup_order",
-                "arguments": {"order_reference": "#1234"},
-            }
-        else:
-            tool_call = {"name": "search_catalog", "arguments": {"query": "recent purchase"}}
-        return CompletionOutput(text="", tool_calls=[tool_call])
+# Stub backends so the model's tool calls can actually execute, letting the
+# example show the model's final response to the tool outcome.
+TOOL_IMPLEMENTATIONS: dict[str, Any] = {
+    "lookup_order": lambda order_reference="": (
+        f"Order {order_reference or '#1234'}: shipped 2 days ago via UPS, "
+        "arriving tomorrow. Tracking 1Z999AA10123456784."
+    ),
+    "search_catalog": lambda query="": f"3 catalog matches for '{query}'.",
+}
 
 
 def _accuracy(prompt: str, adapter: Adapter) -> float:
@@ -100,30 +88,43 @@ def _accuracy(prompt: str, adapter: Adapter) -> float:
 
 def main(adapter: Adapter | None = None) -> dict[str, Any]:
     """Run the demo and return the headline numbers for inspection and tests."""
-    adapter = adapter if adapter is not None else select_adapter(SimulatedRoutingAgent())
+    adapter = adapter if adapter is not None else get_adapter()
+    print_tools(TOOLS)
+
     harness = AttributionHarness(
         adapter=adapter,
         segmenter=SentenceSegmenter(),
         scorer=ToolAccuracyScorer(expected_tool="lookup_order", required_args=["order_reference"]),
     )
-    result = harness.explain(GOOD_PROMPT, tools=TOOLS)
+
+    # One real call: the baseline shows the routing decision being attributed.
+    baseline, estimate = harness.estimate(GOOD_PROMPT, tools=TOOLS)
+    print_completion("Baseline routing decision", baseline)
+    estimate.print()
+
+    # Close the loop: execute the chosen tool and show the model's final answer.
+    final = complete_tool_round_trip(adapter, GOOD_PROMPT, baseline, TOOL_IMPLEMENTATIONS, TOOLS)
+    if final is not None:
+        print_completion("Model's answer after the tool result", final)
+
+    console.print("\n[bold]Attribution over the healthy prompt (objective: tool accuracy)[/bold]\n")
+    result = harness.explain(GOOD_PROMPT, tools=TOOLS, baseline=baseline)
+    result.print()
     ranked = result.ranked()
     top_feature, top_share = ranked[0][0], ranked[0][1]
 
     before = _accuracy(MISLEADING_PROMPT, adapter)
     after = _accuracy(GOOD_PROMPT, adapter)
 
-    print("Attribution over the healthy prompt (objective: tool accuracy):\n")
-    result.print()
-    print(
-        f"\nMost load-bearing feature: {top_feature.feature.name} "
+    console.print(
+        f"\nMost load-bearing feature: [bold magenta]{top_feature.feature.name}[/bold magenta] "
         f"({top_share * 100:.0f}% of attribution mass)\n"
         f"  -> {top_feature.feature.text}"
     )
-    print(
+    console.print(
         "\nDiagnosis confirmed by the task metric:\n"
-        f"  tool accuracy with the misleading description: {before:.2f}\n"
-        f"  tool accuracy after restoring the description: {after:.2f}"
+        f"  tool accuracy with the misleading description: [red]{before:.2f}[/red]\n"
+        f"  tool accuracy after restoring the description: [green]{after:.2f}[/green]"
     )
     print_footer(
         "attribution located the sentence that drives routing; the before/after "
@@ -134,6 +135,7 @@ def main(adapter: Adapter | None = None) -> dict[str, Any]:
         "top_feature_text": top_feature.feature.text,
         "accuracy_before": before,
         "accuracy_after": after,
+        "final_answer": final.text if final else "",
     }
 
 
