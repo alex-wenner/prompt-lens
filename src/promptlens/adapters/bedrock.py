@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, Usage, coerce_tools
 
 
 class BedrockAdapter(Adapter):
@@ -47,7 +47,18 @@ class BedrockAdapter(Adapter):
                         "arguments": tool_use.get("input", {}),
                     }
                 )
-        return CompletionOutput(text="".join(text_parts), tool_calls=tool_calls, raw=response)
+        usage_data = response.get("usage") or {}
+        usage = (
+            Usage(
+                input_tokens=int(usage_data.get("inputTokens", 0)),
+                output_tokens=int(usage_data.get("outputTokens", 0)),
+            )
+            if usage_data
+            else None
+        )
+        return CompletionOutput(
+            text="".join(text_parts), tool_calls=tool_calls, usage=usage, raw=response
+        )
 
 
 def _default_client() -> Any:

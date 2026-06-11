@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from promptlens.adapters.models import supports_temperature
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, Usage, coerce_tools
 
 
 class AnthropicAdapter(Adapter):
@@ -121,7 +121,17 @@ def _message_to_output(response: Any) -> CompletionOutput:
                     "arguments": getattr(block, "input", {}),
                 }
             )
-    return CompletionOutput(text="".join(text_parts), tool_calls=tool_calls, raw=response)
+    usage_data = getattr(response, "usage", None)
+    input_tokens = getattr(usage_data, "input_tokens", None) if usage_data else None
+    output_tokens = getattr(usage_data, "output_tokens", None) if usage_data else None
+    usage = (
+        Usage(input_tokens=int(input_tokens), output_tokens=int(output_tokens))
+        if input_tokens is not None and output_tokens is not None
+        else None
+    )
+    return CompletionOutput(
+        text="".join(text_parts), tool_calls=tool_calls, usage=usage, raw=response
+    )
 
 
 def _default_client() -> Any:

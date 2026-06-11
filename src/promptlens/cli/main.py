@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from promptlens import (
     Adapter,
@@ -17,10 +21,9 @@ from promptlens import (
     Segmenter,
     explain_drilldown,
 )
-from promptlens.adapters import EchoAdapter
 from promptlens.cli.banner import print_banner
 from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
-from promptlens.core.base import ToolDefinitions
+from promptlens.core.base import CompletionOutput, ToolDefinitions
 from promptlens.core.pricing import MODEL_PRICING_USD_PER_MTOK
 from promptlens.mutators import LLMRewriteMutator
 from promptlens.optimizers import LLMPromptOptimizer
@@ -88,33 +91,55 @@ def _auto_segmenter(prompt: str) -> Segmenter:
     return SentenceSegmenter()
 
 
-def _offline_harness(
-    model: str, segmenter_name: str, scale: str | int = "quick", prompt_text: str = ""
-) -> AttributionHarness:
-    return AttributionHarness(
-        adapter=EchoAdapter(model=model),
-        segmenter=_segmenter(segmenter_name, prompt_text),
-        scorer=LengthDriftScorer(),
-        perturbation_scale=_parse_scale(scale),
-    )
-
-
-def _cost_gate(
+def _baseline_gate(
     harness: AttributionHarness,
     prompt_text: str,
     tools: ToolDefinitions | None,
     *,
     dry_run: bool,
-    confirm: bool,
-    exact_tokens: bool = False,
-) -> None:
-    """Print the cost estimate and stop (dry run) or ask before inference calls."""
-    if not dry_run and not confirm:
-        return
-    harness.estimate(prompt_text, tools=tools, exact_tokens=exact_tokens).print()
+    yes: bool,
+) -> CompletionOutput:
+    """Run the real baseline, show measured cost, and ask before the sweep.
+
+    promptlens never guesses token counts: the baseline completion runs for
+    real (one provider call), its provider-reported usage is multiplied by the
+    number of perturbations, and the user confirms the projected spend before
+    any further provider calls are made.
+    """
+    console = Console()
+    with console.status("[bold cyan]Running baseline completion…[/bold cyan]"):
+        baseline, estimate = harness.estimate(prompt_text, tools=tools)
+    _print_baseline(console, baseline)
+    estimate.print()
     if dry_run:
+        console.print("[dim]Dry run: stopping after the baseline call.[/dim]")
         raise typer.Exit()
-    typer.confirm("Run attribution with these provider calls?", abort=True)
+    if not yes:
+        typer.confirm(
+            f"Proceed with {estimate.evaluations} more provider calls "
+            f"(~${estimate.total_usd:.4f} total)?",
+            default=True,
+            abort=True,
+        )
+    return baseline
+
+
+def _print_baseline(console: Console, baseline: CompletionOutput) -> None:
+    body = Text(baseline.text.strip()[:600] or "(no text output)")
+    console.print(
+        Panel(body, title="[bold]Baseline output[/bold]", border_style="green")
+    )
+    if baseline.tool_calls:
+        table = Table(
+            title="Baseline tool calls", title_style="bold", border_style="green"
+        )
+        table.add_column("Tool", style="bold magenta")
+        table.add_column("Arguments")
+        for call in baseline.tool_calls:
+            table.add_row(
+                Text(str(call.get("name"))), Text(json.dumps(call.get("arguments")))
+            )
+        console.print(table)
 
 
 def _harness(
@@ -182,7 +207,23 @@ def _parse_scale(scale: str | int) -> str | int:
 @app.command()
 def estimate(
     prompt: Annotated[str, typer.Option(help="Prompt text or path to a prompt file.")],
-    model: Annotated[str, typer.Option(help="Provider/model name.")] = "openai/gpt-4o-mini",
+    provider: Annotated[
+        str,
+        typer.Option(
+            help=(
+                "Provider type: echo, openai, anthropic, bedrock, copilot, grok, "
+                "gemini, ollama (local), or openai-compatible (with --base-url)."
+            )
+        ),
+    ] = "openai",
+    model: Annotated[
+        str | None,
+        typer.Option(help="Model id. Defaults to provider-specific environment/default model."),
+    ] = None,
+    base_url: Annotated[
+        str | None,
+        typer.Option(help="Base URL for the ollama or openai-compatible providers."),
+    ] = None,
     segmenter: Annotated[
         str, typer.Option(help="auto, sentences, paragraphs, sections, or tools.")
     ] = "sentences",
@@ -192,13 +233,28 @@ def estimate(
     ] = None,
     scale: Annotated[str, typer.Option(help=_SCALE_HELP)] = "quick",
 ) -> None:
-    """Preview attribution cost without provider calls."""
+    """Run the baseline once (one real call) and project attribution cost from it."""
     prompt_text = _read_prompt(prompt)
-    harness = _offline_harness(
-        model=model, segmenter_name=segmenter, scale=scale, prompt_text=prompt_text
+    try:
+        adapter = build_adapter(
+            provider=provider, model=model, temperature=0.0, base_url=base_url
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    harness = AttributionHarness(
+        adapter=adapter,
+        segmenter=_segmenter(segmenter, prompt_text),
+        scorer=LengthDriftScorer(),
+        perturbation_scale=_parse_scale(scale),
     )
     compare_models = [item.strip() for item in compare.split(",")] if compare else None
-    harness.estimate(prompt_text, tools=_read_tools(tools), compare_models=compare_models).print()
+    console = Console()
+    with console.status("[bold cyan]Running baseline completion…[/bold cyan]"):
+        baseline, cost = harness.estimate(
+            prompt_text, tools=_read_tools(tools), compare_models=compare_models
+        )
+    _print_baseline(console, baseline)
+    cost.print()
 
 
 @app.command()
@@ -311,23 +367,20 @@ def explain(
     ] = None,
     dry_run: Annotated[
         bool,
-        typer.Option("--dry-run", help="Print the cost estimate and exit without provider calls."),
-    ] = False,
-    confirm: Annotated[
-        bool,
         typer.Option(
-            "--confirm", help="Show the cost estimate and ask before making provider calls."
+            "--dry-run",
+            help=(
+                "Run only the baseline completion, print the measured cost "
+                "estimate, and exit before the attribution sweep."
+            ),
         ),
     ] = False,
-    exact_tokens: Annotated[
+    yes: Annotated[
         bool,
         typer.Option(
-            "--exact-tokens",
-            help=(
-                "Count estimate tokens with the provider's free count_tokens endpoint "
-                "when the adapter supports it (anthropic). Needs credentials and network "
-                "but runs no inference; other providers fall back to local counting."
-            ),
+            "--yes",
+            "-y",
+            help="Skip the cost confirmation prompt and run the sweep immediately.",
         ),
     ] = False,
 ) -> None:
@@ -354,23 +407,22 @@ def explain(
         samples_per_coalition=samples_per_coalition,
         use_batch_api=batch_api,
     )
-    _cost_gate(
+    baseline = _baseline_gate(
         harness,
         prompt_text,
         tool_definitions,
         dry_run=dry_run,
-        confirm=confirm,
-        exact_tokens=exact_tokens,
+        yes=yes,
     )
     result: AttributionResult | DrilldownResult
     if drilldown:
         drilldown_result = explain_drilldown(
-            harness, prompt_text, tools=tool_definitions, top_k=drilldown_top
+            harness, prompt_text, tools=tool_definitions, top_k=drilldown_top, baseline=baseline
         )
         result = drilldown_result
         synopsis_target = drilldown_result.overview
     else:
-        result = harness.explain(prompt_text, tools=tool_definitions)
+        result = harness.explain(prompt_text, tools=tool_definitions, baseline=baseline)
         synopsis_target = result
     if synopsis:
         writer = LLMSynopsisWriter(
@@ -472,26 +524,22 @@ def optimize(
     ] = False,
     dry_run: Annotated[
         bool,
-        typer.Option("--dry-run", help="Print the cost estimate and exit without provider calls."),
-    ] = False,
-    confirm: Annotated[
-        bool,
         typer.Option(
-            "--confirm",
+            "--dry-run",
             help=(
-                "Show the cost estimate and ask before making provider calls. "
-                "The final rewrite adds one call on top of the estimate."
+                "Run only the baseline completion, print the measured cost "
+                "estimate, and exit before the attribution sweep."
             ),
         ),
     ] = False,
-    exact_tokens: Annotated[
+    yes: Annotated[
         bool,
         typer.Option(
-            "--exact-tokens",
+            "--yes",
+            "-y",
             help=(
-                "Count estimate tokens with the provider's free count_tokens endpoint "
-                "when the adapter supports it (anthropic). Needs credentials and network "
-                "but runs no inference; other providers fall back to local counting."
+                "Skip the cost confirmation prompt. The final rewrite adds one "
+                "call on top of the estimate."
             ),
         ),
     ] = False,
@@ -514,15 +562,14 @@ def optimize(
         use_batch_api=batch_api,
         with_optimizer=True,
     )
-    _cost_gate(
+    baseline = _baseline_gate(
         harness,
         prompt_text,
         tool_definitions,
         dry_run=dry_run,
-        confirm=confirm,
-        exact_tokens=exact_tokens,
+        yes=yes,
     )
-    result = harness.optimize(prompt_text, tools=tool_definitions)
+    result = harness.optimize(prompt_text, tools=tool_definitions, baseline=baseline)
     if output:
         Path(output).write_text(result.to_json(), encoding="utf-8")
     result.print()
@@ -531,8 +578,13 @@ def optimize(
 @app.command("models")
 def list_models() -> None:
     """List built-in pricing entries."""
+    table = Table(title="Built-in model pricing", title_style="bold cyan", border_style="cyan")
+    table.add_column("Model", style="bold magenta")
+    table.add_column("Input $/MTok", justify="right")
+    table.add_column("Output $/MTok", justify="right")
     for model, (input_rate, output_rate) in sorted(MODEL_PRICING_USD_PER_MTOK.items()):
-        typer.echo(f"{model}\tinput=${input_rate}/MTok\toutput=${output_rate}/MTok")
+        table.add_row(model, f"${input_rate}", f"${output_rate}")
+    Console().print(table)
 
 
 # Registered late so the wizard can lazily import this module's helpers without

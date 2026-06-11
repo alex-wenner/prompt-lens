@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from promptlens.adapters.models import supports_logprobs
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, Usage, coerce_tools
 
 _CHAT_COMPLETIONS_ENDPOINT = "/v1/chat/completions"
 
@@ -68,7 +68,13 @@ class OpenAIAdapter(Adapter):
         text = message.content or ""
         tool_calls = [_openai_tool_call_to_dict(call) for call in (message.tool_calls or [])]
         logprobs = _extract_logprobs(choice)
-        return CompletionOutput(text=text, tool_calls=tool_calls, logprobs=logprobs, raw=response)
+        return CompletionOutput(
+            text=text,
+            tool_calls=tool_calls,
+            logprobs=logprobs,
+            usage=_extract_usage(response),
+            raw=response,
+        )
 
     def complete_batch(
         self, prompts: Sequence[str], tools: ToolDefinitions | None = None
@@ -164,12 +170,33 @@ def _completion_body_to_output(body: dict[str, Any]) -> CompletionOutput:
     logprobs = (
         [float(item["logprob"]) for item in logprobs_content] if logprobs_content else None
     )
+    usage_data = body.get("usage") or {}
+    usage = (
+        Usage(
+            input_tokens=int(usage_data.get("prompt_tokens", 0)),
+            output_tokens=int(usage_data.get("completion_tokens", 0)),
+        )
+        if usage_data
+        else None
+    )
     return CompletionOutput(
         text=message.get("content") or "",
         tool_calls=tool_calls,
         logprobs=logprobs,
+        usage=usage,
         raw=body,
     )
+
+
+def _extract_usage(response: Any) -> Usage | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    input_tokens = getattr(usage, "prompt_tokens", None)
+    output_tokens = getattr(usage, "completion_tokens", None)
+    if input_tokens is None or output_tokens is None:
+        return None
+    return Usage(input_tokens=int(input_tokens), output_tokens=int(output_tokens))
 
 
 def _extract_logprobs(choice: Any) -> list[float] | None:

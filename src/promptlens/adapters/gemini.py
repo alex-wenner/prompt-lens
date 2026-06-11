@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, Usage, coerce_tools
 
 
 class GeminiAdapter(Adapter):
@@ -65,4 +65,12 @@ def _response_to_output(response: Any) -> CompletionOutput:
         }
         for call in (getattr(response, "function_calls", None) or [])
     ]
-    return CompletionOutput(text=str(text), tool_calls=tool_calls, raw=response)
+    metadata = getattr(response, "usage_metadata", None)
+    input_tokens = getattr(metadata, "prompt_token_count", None) if metadata else None
+    output_tokens = getattr(metadata, "candidates_token_count", None) if metadata else None
+    usage = (
+        Usage(input_tokens=int(input_tokens), output_tokens=int(output_tokens))
+        if input_tokens is not None and output_tokens is not None
+        else None
+    )
+    return CompletionOutput(text=str(text), tool_calls=tool_calls, usage=usage, raw=response)

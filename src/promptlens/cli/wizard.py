@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +73,7 @@ def run_wizard() -> None:
 
     from promptlens.cli.main import _read_prompt, _read_tools, _segmenter
 
-    prompt_text = _read_prompt(Prompt.ask("[bold]Prompt text or path to a prompt file[/bold]"))
+    prompt_text = _read_prompt(_ask_prompt_path())
 
     provider = _choice(console, "Provider", _PROVIDERS, default="echo")
     model = Prompt.ask("Model id", default="auto")
@@ -110,7 +111,16 @@ def run_wizard() -> None:
         raise typer.BadParameter(str(exc)) from exc
 
     console.print()
-    harness.estimate(prompt_text, tools=tools).print()
+    with console.status("[bold cyan]Running baseline completion…[/bold cyan]"):
+        baseline, cost = harness.estimate(prompt_text, tools=tools)
+    console.print(
+        Panel(
+            Text(baseline.text.strip()[:600] or "(no text output)"),
+            title="[bold]Baseline output[/bold]",
+            border_style="green",
+        )
+    )
+    cost.print()
     if drilldown:
         console.print(
             "[dim]The estimate covers the overview pass; each refined section "
@@ -120,10 +130,12 @@ def run_wizard() -> None:
         raise typer.Exit()
 
     if drilldown:
-        result: Any = explain_drilldown(harness, prompt_text, tools=tools, top_k=drilldown_top)
+        result: Any = explain_drilldown(
+            harness, prompt_text, tools=tools, top_k=drilldown_top, baseline=baseline
+        )
         synopsis_target = result.overview
     else:
-        result = harness.explain(prompt_text, tools=tools)
+        result = harness.explain(prompt_text, tools=tools, baseline=baseline)
         synopsis_target = result
     if synopsis:
         writer = LLMSynopsisWriter(
@@ -164,6 +176,25 @@ def run_wizard() -> None:
         synopsis_provider=synopsis_provider,
         synopsis_model=synopsis_model,
     )
+
+
+def _ask_prompt_path() -> str:
+    """Ask for the prompt text or file, with tab-completion on real terminals.
+
+    On an interactive terminal this uses ``prompt_toolkit`` so file paths
+    tab-complete; in pipes and tests it falls back to a plain rich prompt.
+    """
+    if sys.stdin.isatty():  # pragma: no cover - interactive only
+        from prompt_toolkit import prompt as toolkit_prompt
+        from prompt_toolkit.completion import PathCompleter
+
+        return str(
+            toolkit_prompt(
+                "Prompt text or path to a prompt file: ",
+                completer=PathCompleter(expanduser=True),
+            )
+        )
+    return str(Prompt.ask("[bold]Prompt text or path to a prompt file[/bold]"))
 
 
 def _choice(

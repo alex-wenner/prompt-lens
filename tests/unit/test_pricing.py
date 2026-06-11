@@ -1,138 +1,100 @@
-import sys
-from types import SimpleNamespace
+import pytest
 
 from promptlens import AttributionHarness
 from promptlens.adapters import EchoAdapter
-from promptlens.core import pricing
-from promptlens.core.pricing import count_tokens, estimate_cost
-from promptlens.maskers import DropMasker
+from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, Usage
+from promptlens.core.pricing import estimate_cost_from_baseline, resolve_rates
 from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import SentenceSegmenter
 
 
-def test_heuristic_used_for_claude_models() -> None:
-    # tiktoken is OpenAI's tokenizer and undercounts Claude tokens, so Claude
-    # estimates must stay on the conservative heuristic even when installed.
-    count, counter = count_tokens("hello world", "anthropic/claude-opus-4-8")
-    assert counter == "heuristic"
-    assert count == len("hello world") // 4 + 1
-
-
-def test_heuristic_used_for_unknown_models() -> None:
-    _, counter = count_tokens("hello", "some-local-model")
-    assert counter == "heuristic"
-
-
-def test_tiktoken_used_for_openai_models_when_installed(monkeypatch) -> None:
-    class _FakeEncoding:
-        def encode(self, text: str) -> list[int]:
-            return [0] * len(text.split())
-
-    fake_tiktoken = SimpleNamespace(
-        encoding_for_model=lambda name: _FakeEncoding(),
-        get_encoding=lambda name: _FakeEncoding(),
-    )
-    monkeypatch.setitem(sys.modules, "tiktoken", fake_tiktoken)
-    pricing._tiktoken_encoding.cache_clear()
-    try:
-        count, counter = count_tokens("one two three", "openai/gpt-4o-mini")
-    finally:
-        pricing._tiktoken_encoding.cache_clear()
-
-    assert counter == "tiktoken"
-    assert count == 3
-
-
-def test_estimate_counts_each_masked_prompt() -> None:
-    prompts = ["aaaa bbbb", "aaaa", "bbbb"]
-    estimate = estimate_cost(
-        model="openai-compatible/local",
-        prompt=prompts[0],
-        features=2,
-        evaluations=2,
-        expected_output_tokens=10,
-        evaluation_prompts=prompts[1:],
+def test_estimate_multiplies_baseline_usage_by_calls() -> None:
+    estimate = estimate_cost_from_baseline(
+        model="openai/gpt-4o-mini",
+        usage=Usage(input_tokens=100, output_tokens=40),
+        features=3,
+        evaluations=3,
     )
 
-    expected = sum((len(p) + 3) // 4 for p in prompts)
-    assert estimate.input_tokens == expected
-    assert estimate.output_tokens == 10 * 3  # baseline + two evaluations
-    assert estimate.token_counter == "heuristic"
+    # Baseline plus three perturbations: every call is priced at measured usage.
+    assert estimate.input_tokens == 100 * 4
+    assert estimate.output_tokens == 40 * 4
+    rates = resolve_rates("openai/gpt-4o-mini")
+    assert estimate.input_cost_usd == pytest.approx(400 / 1_000_000 * rates[0])
+    assert estimate.output_cost_usd == pytest.approx(160 / 1_000_000 * rates[1])
 
 
-def test_estimate_scales_with_samples_per_coalition() -> None:
-    estimate = estimate_cost(
-        model="openai-compatible/local",
-        prompt="aaaa bbbb",
-        features=2,
-        evaluations=4,  # two masked prompts, two samples each
-        evaluation_prompts=["aaaa", "bbbb"],
+def test_estimate_compares_models_on_the_same_usage() -> None:
+    estimate = estimate_cost_from_baseline(
+        model="openai/gpt-4o-mini",
+        usage=Usage(input_tokens=10, output_tokens=10),
+        features=1,
+        evaluations=1,
+        compare_models=["ollama/llama3.2", "anthropic/claude-haiku-4-5"],
     )
 
-    per_sweep = ((len("aaaa") + 3) // 4) * 2
-    baseline = (len("aaaa bbbb") + 3) // 4
-    assert estimate.input_tokens == baseline + per_sweep * 2
+    assert estimate.comparisons["ollama/llama3.2"] == 0.0
+    assert estimate.comparisons["anthropic/claude-haiku-4-5"] > 0.0
 
 
-def test_harness_estimate_reflects_masker_choice() -> None:
-    prompt = "Alpha sentence here. Beta sentence here."
-    drop = AttributionHarness(
-        adapter=EchoAdapter(),
-        segmenter=SentenceSegmenter(),
-        scorer=LengthDriftScorer(),
-        masker=DropMasker(),
-    ).estimate(prompt)
-    placeholder = AttributionHarness(
-        adapter=EchoAdapter(),
-        segmenter=SentenceSegmenter(),
-        scorer=LengthDriftScorer(),
-    ).estimate(prompt)
-
-    # Dropping features outright sends shorter prompts than placeholder masking.
-    assert drop.input_tokens < placeholder.input_tokens
+def test_resolve_rates_accepts_bare_model_names() -> None:
+    assert resolve_rates("gpt-4o-mini") == resolve_rates("openai/gpt-4o-mini")
+    assert resolve_rates("totally-unknown-model") == (0.0, 0.0)
 
 
-class _CountingClient:
-    """Fake Anthropic client exposing the count_tokens metering endpoint."""
-
-    def __init__(self) -> None:
-        self.counted: list[str] = []
-        self.messages = SimpleNamespace(
-            create=lambda **kwargs: SimpleNamespace(content=[]),
-            count_tokens=self._count_tokens,
-        )
-
-    def _count_tokens(self, *, model: str, messages: list, **kwargs) -> SimpleNamespace:
-        text = messages[0]["content"]
-        self.counted.append(text)
-        return SimpleNamespace(input_tokens=len(text.split()))
-
-
-def test_exact_tokens_uses_anthropic_count_tokens_endpoint() -> None:
-    from promptlens.adapters import AnthropicAdapter
-
-    client = _CountingClient()
-    harness = AttributionHarness(
-        adapter=AnthropicAdapter(model="claude-sonnet-4-6", client=client),
-        segmenter=SentenceSegmenter(),
-        scorer=LengthDriftScorer(),
-    )
-
-    estimate = harness.estimate("alpha one two. beta three.", exact_tokens=True)
-
-    assert estimate.token_counter == "provider"
-    # Baseline prompt plus one masked prompt per feature, each counted exactly.
-    assert len(client.counted) == 3
-    assert estimate.input_tokens == sum(len(text.split()) for text in client.counted)
-
-
-def test_exact_tokens_falls_back_for_adapters_without_counter() -> None:
+def test_harness_estimate_runs_real_baseline_and_returns_it() -> None:
     harness = AttributionHarness(
         adapter=EchoAdapter(),
         segmenter=SentenceSegmenter(),
         scorer=LengthDriftScorer(),
     )
 
-    estimate = harness.estimate("alpha one. beta two.", exact_tokens=True)
+    baseline, estimate = harness.estimate("Alpha sentence here. Beta sentence here.")
 
-    assert estimate.token_counter == "heuristic"
+    assert baseline.usage is not None
+    assert estimate.features == 2
+    assert estimate.evaluations == 2
+    # Baseline + 2 evaluations, each at the measured baseline usage.
+    assert estimate.input_tokens == baseline.usage.input_tokens * 3
+
+
+def test_harness_estimate_reuses_supplied_baseline() -> None:
+    class CountingAdapter(EchoAdapter):
+        calls = 0
+
+        def complete(
+            self, prompt: str, tools: ToolDefinitions | None = None
+        ) -> CompletionOutput:
+            type(self).calls += 1
+            return super().complete(prompt, tools=tools)
+
+    adapter = CountingAdapter()
+    harness = AttributionHarness(
+        adapter=adapter,
+        segmenter=SentenceSegmenter(),
+        scorer=LengthDriftScorer(),
+    )
+    baseline, _ = harness.estimate("One. Two.")
+    assert CountingAdapter.calls == 1
+
+    harness.estimate("One. Two.", baseline=baseline)
+    assert CountingAdapter.calls == 1  # no extra baseline call
+
+
+def test_harness_estimate_requires_provider_usage() -> None:
+    class NoUsageAdapter(Adapter):
+        model = "no-usage"
+
+        def complete(
+            self, prompt: str, tools: ToolDefinitions | None = None
+        ) -> CompletionOutput:
+            return CompletionOutput(text=prompt)
+
+    harness = AttributionHarness(
+        adapter=NoUsageAdapter(),
+        segmenter=SentenceSegmenter(),
+        scorer=LengthDriftScorer(),
+    )
+
+    with pytest.raises(ValueError, match="usage"):
+        harness.estimate("One. Two.")
