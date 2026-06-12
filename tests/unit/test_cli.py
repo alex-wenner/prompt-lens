@@ -14,6 +14,7 @@ def test_explain_provider_echo_still_runs() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
         ],
     )
 
@@ -33,6 +34,7 @@ def test_explain_accepts_scorer_and_sampler_flags(tmp_path) -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--sampler",
             "leave-one-out",
             "--scorer",
@@ -57,6 +59,7 @@ def test_explain_can_include_supplementary_rewrites(tmp_path) -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--supplementary-rewrites",
             "1",
             "--output",
@@ -82,6 +85,7 @@ def test_optimize_command_runs_with_echo(tmp_path) -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--output",
             str(output),
         ],
@@ -95,7 +99,7 @@ def test_optimize_command_runs_with_echo(tmp_path) -> None:
     assert "caveat" in data["metadata"]
 
 
-def test_explain_dry_run_estimates_without_running() -> None:
+def test_explain_dry_run_stops_after_baseline() -> None:
     result = CliRunner().invoke(
         app,
         [
@@ -109,11 +113,12 @@ def test_explain_dry_run_estimates_without_running() -> None:
     )
 
     assert result.exit_code == 0
-    assert "CostEstimate" in result.output
+    assert "Projected sweep cost" in result.output
+    assert "Baseline run" in result.output
     assert "promptlens Attribution" not in result.output
 
 
-def test_explain_confirm_aborts_on_no() -> None:
+def test_explain_cost_gate_aborts_on_no() -> None:
     result = CliRunner().invoke(
         app,
         [
@@ -122,17 +127,16 @@ def test_explain_confirm_aborts_on_no() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
-            "--confirm",
         ],
         input="n\n",
     )
 
     assert result.exit_code != 0
-    assert "CostEstimate" in result.output
+    assert "Projected sweep cost" in result.output
     assert "promptlens Attribution" not in result.output
 
 
-def test_explain_confirm_runs_on_yes() -> None:
+def test_explain_cost_gate_runs_on_yes_answer() -> None:
     result = CliRunner().invoke(
         app,
         [
@@ -141,14 +145,30 @@ def test_explain_confirm_runs_on_yes() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
-            "--confirm",
         ],
         input="y\n",
     )
 
     assert result.exit_code == 0
-    assert "CostEstimate" in result.output
+    assert "Projected sweep cost" in result.output
     assert "promptlens Attribution" in result.output
+
+
+def test_estimate_runs_baseline_and_projects() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "estimate",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Baseline run" in result.output
+    assert "Projected sweep cost" in result.output
 
 
 def test_auto_segmenter_picks_sections_for_markdown() -> None:
@@ -160,6 +180,7 @@ def test_auto_segmenter_picks_sections_for_markdown() -> None:
             "# Role\nBe concise.\n\n# Task\nSummarize.",
             "--provider",
             "echo",
+            "--yes",
             "--segmenter",
             "auto",
         ],
@@ -180,6 +201,7 @@ def test_explain_synopsis_attaches_llm_summary(tmp_path) -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--synopsis",
             "--output",
             str(output),
@@ -204,11 +226,60 @@ def test_explain_richer_output_shows_drift_highlights() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
         ],
     )
 
     assert result.exit_code == 0
     assert "Largest output drifts" in result.output
+
+
+def test_explain_shows_tool_definitions(tmp_path) -> None:
+    tools = tmp_path / "tools.json"
+    tools.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookup_order",
+                        "description": "Look up the status of an existing customer order.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "order_reference": {
+                                    "type": "string",
+                                    "description": "The customer's order id.",
+                                }
+                            },
+                            "required": ["order_reference"],
+                        },
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "explain",
+            "--prompt",
+            "Alpha sentence. Beta sentence.",
+            "--provider",
+            "echo",
+            "--yes",
+            "--tools",
+            str(tools),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Tools the model sees" in result.output
+    assert "lookup_order" in result.output
+    assert "order_reference" in result.output
+    assert "string" in result.output
 
 
 def test_explain_accepts_tool_args_scorer() -> None:
@@ -220,6 +291,7 @@ def test_explain_accepts_tool_args_scorer() -> None:
             "Alpha sentence. Beta sentence.",
             "--provider",
             "echo",
+            "--yes",
             "--scorer",
             "tool-args",
         ],
@@ -254,6 +326,7 @@ def test_explain_drilldown_refines_top_sections(tmp_path) -> None:
             str(prompt),
             "--provider",
             "echo",
+            "--yes",
             "--drilldown",
             "--output",
             str(output),
@@ -269,12 +342,15 @@ def test_explain_drilldown_refines_top_sections(tmp_path) -> None:
 
 
 def test_wizard_runs_with_defaults() -> None:
-    answers = "Alpha sentence. Beta sentence.\n" + "\n" * 11
+    # prompt text, provider (echo), model, segmenter, drilldown?, scorer,
+    # tools path, masker, scale, synopsis?, cost gate, save?
+    answers = "Alpha sentence. Beta sentence.\necho\n" + "\n" * 11
 
     result = CliRunner().invoke(app, ["wizard"], input=answers)
 
     assert result.exit_code == 0
     assert "see which parts of your prompt actually matter" in result.output
+    assert "Projected sweep cost" in result.output
     assert "promptlens Attribution" in result.output
     assert "Run this again without the wizard" in result.output
     assert "--provider echo" in result.output

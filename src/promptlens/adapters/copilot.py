@@ -14,7 +14,7 @@ import threading
 from collections.abc import Coroutine
 from typing import Any
 
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.base import Adapter, CompletionOutput, TokenUsage, ToolDefinitions
 
 
 class CopilotAdapter(Adapter):
@@ -158,4 +158,18 @@ def _event_to_output(event: Any) -> CompletionOutput:
         }
         for request in tool_requests
     ]
-    return CompletionOutput(text=str(text), tool_calls=tool_calls, raw=event)
+    return CompletionOutput(
+        text=str(text),
+        tool_calls=tool_calls,
+        usage=_extract_usage(getattr(data, "usage", None)),
+        raw=event,
+    )
+
+
+def _extract_usage(usage: Any) -> TokenUsage | None:
+    """Best-effort usage mapping; the Copilot runtime does not always meter."""
+    input_tokens = getattr(usage, "input_tokens", None)
+    output_tokens = getattr(usage, "output_tokens", None)
+    if input_tokens is None or output_tokens is None:
+        return None
+    return TokenUsage(input_tokens=int(input_tokens), output_tokens=int(output_tokens))

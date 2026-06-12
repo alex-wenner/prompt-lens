@@ -33,6 +33,20 @@ class Feature(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class TokenUsage(BaseModel):
+    """Real token consumption reported by the provider for one completion.
+
+    promptlens never guesses token counts with a local tokenizer; the provider's
+    own metering on the baseline call is the source of truth that cost
+    projections are built from.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    input_tokens: int
+    output_tokens: int
+
+
 class CompletionOutput(BaseModel):
     """Normalized model output returned by adapters."""
 
@@ -41,6 +55,7 @@ class CompletionOutput(BaseModel):
     text: str
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     logprobs: list[float] | None = None
+    usage: TokenUsage | None = None
     raw: Any | None = None
 
 
@@ -176,6 +191,7 @@ __all__ = [
     "Sampler",
     "Scorer",
     "Segmenter",
+    "TokenUsage",
     "Tool",
     "ToolDefinitions",
     "ToolLike",

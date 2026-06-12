@@ -11,7 +11,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
+from promptlens.core.base import (
+    Adapter,
+    CompletionOutput,
+    TokenUsage,
+    ToolDefinitions,
+    coerce_tools,
+)
 
 
 class GrokAdapter(Adapter):
@@ -70,7 +76,20 @@ def _response_to_output(response: Any) -> CompletionOutput:
     tool_calls = [
         _tool_call_to_dict(call) for call in (getattr(response, "tool_calls", None) or [])
     ]
-    return CompletionOutput(text=str(text), tool_calls=tool_calls, raw=response)
+    return CompletionOutput(
+        text=str(text),
+        tool_calls=tool_calls,
+        usage=_extract_usage(getattr(response, "usage", None)),
+        raw=response,
+    )
+
+
+def _extract_usage(usage: Any) -> TokenUsage | None:
+    prompt_tokens = getattr(usage, "prompt_tokens", None)
+    completion_tokens = getattr(usage, "completion_tokens", None)
+    if prompt_tokens is None or completion_tokens is None:
+        return None
+    return TokenUsage(input_tokens=int(prompt_tokens), output_tokens=int(completion_tokens))
 
 
 def _tool_call_to_dict(call: Any) -> dict[str, Any]:

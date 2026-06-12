@@ -7,7 +7,13 @@ from collections.abc import Sequence
 from typing import Any
 
 from promptlens.adapters.models import supports_temperature
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
+from promptlens.core.base import (
+    Adapter,
+    CompletionOutput,
+    TokenUsage,
+    ToolDefinitions,
+    coerce_tools,
+)
 
 
 class AnthropicAdapter(Adapter):
@@ -57,22 +63,6 @@ class AnthropicAdapter(Adapter):
         response = client.messages.create(**self._request_params(prompt, tools))
         return _message_to_output(response)
 
-    def count_tokens(self, prompt: str, tools: ToolDefinitions | None = None) -> int:
-        """Count input tokens exactly via the Messages API count_tokens endpoint.
-
-        This is a free metering call — it runs no inference and bills no tokens —
-        but it does hit the network, so the harness only uses it when an exact
-        estimate is explicitly requested.
-        """
-        client = self._client or _default_client()
-        kwargs: dict[str, Any] = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if tools:
-            kwargs["tools"] = coerce_tools(tools, "anthropic")
-        return int(client.messages.count_tokens(**kwargs).input_tokens)
-
     def complete_batch(
         self, prompts: Sequence[str], tools: ToolDefinitions | None = None
     ) -> list[CompletionOutput]:
@@ -121,7 +111,20 @@ def _message_to_output(response: Any) -> CompletionOutput:
                     "arguments": getattr(block, "input", {}),
                 }
             )
-    return CompletionOutput(text="".join(text_parts), tool_calls=tool_calls, raw=response)
+    return CompletionOutput(
+        text="".join(text_parts),
+        tool_calls=tool_calls,
+        usage=_extract_usage(getattr(response, "usage", None)),
+        raw=response,
+    )
+
+
+def _extract_usage(usage: Any) -> TokenUsage | None:
+    input_tokens = getattr(usage, "input_tokens", None)
+    output_tokens = getattr(usage, "output_tokens", None)
+    if input_tokens is None or output_tokens is None:
+        return None
+    return TokenUsage(input_tokens=int(input_tokens), output_tokens=int(output_tokens))
 
 
 def _default_client() -> Any:
