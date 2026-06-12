@@ -11,27 +11,46 @@ by step" and "include a worked example"): either one makes replies long, so
 neither has a marginal effect at the full prompt. It attributes the same prompt
 two ways and prints them side by side.
 
-It pins a config permutation: **`RandomCoalitionSampler`** (seeded) versus the
-default **`LeaveOneOutSampler`**, with the **`FillerMasker`**. It runs fully
-offline — the lesson is about the estimator, not the model.
+It pins a config permutation: **`RandomCoalitionSampler`** (seeded, 300
+coalitions — a Monte-Carlo Banzhaf value at inclusion probability 0.5) versus
+the default **`LeaveOneOutSampler`**, with the **`FillerMasker`**.
 
 ## Run it
 
 ```bash
-python examples/interaction_effects/run.py
+OPENAI_API_KEY=sk-... python examples/interaction_effects/run.py
 ```
 
-## What you should see
+This makes **real provider calls** — the Banzhaf sweep alone is 300 calls on a
+deliberately short prompt, so it is cheap but not free. The default provider is
+`openai`; pick another with `PROMPTLENS_EXAMPLE_PROVIDER` and override the
+model with `PROMPTLENS_EXAMPLE_MODEL` (see [`_shared.py`](../_shared.py)).
 
-```
+## Example output
+
+(output from a gpt-5.4-mini run; your numbers will vary)
+
+```text
+Provider: openai · model: gpt-5.4-mini
+Two redundant instructions, scored two ways (attribution value):
+
   instruction                leave-one-out     Banzhaf
-  step-by-step rule                 0.0000      0.4565
-  worked-example rule               0.0000      0.4184
+  step-by-step rule                 0.0000      0.2216
+  worked-example rule               0.0000      0.1893
+
+Leave-one-out scores both at ~0 — masking either alone changes nothing because
+its twin still triggers the long reply. Trusting that, you would delete both
+and watch replies go terse. Banzhaf judges each across coalitions where the
+twin is also masked, and recovers their real effect.
+
+Lens, not oracle: leave-one-out and Banzhaf answer different questions. Use
+leave-one-out for marginal effect against the live prompt; use random
+coalitions when redundancy or interactions may be hiding a feature.
 ```
 
-Leave-one-out scores both redundant rules at exactly 0. The random-coalition
-(Banzhaf) sampler judges each across coalitions where its twin is *also* masked,
-and recovers the real contribution of both.
+Leave-one-out scores both redundant rules at ~0. The random-coalition (Banzhaf)
+sampler judges each across coalitions where its twin is *also* masked, and
+recovers the real contribution of both.
 
 ## When to reach for which
 

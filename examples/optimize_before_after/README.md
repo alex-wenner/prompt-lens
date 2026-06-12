@@ -10,36 +10,60 @@ for review. The rewrite is **never** adopted automatically.
 ## Run it
 
 ```bash
-python examples/optimize_before_after/run.py
+OPENAI_API_KEY=sk-... python examples/optimize_before_after/run.py
 ```
 
-By default this calls a **real provider** — the same model answers the
-attribution sweep and proposes the rewrite. Set `OPENAI_API_KEY` (or
-`ANTHROPIC_API_KEY` plus `PROMPTLENS_EXAMPLE_PROVIDER=anthropic`) to choose the
-model; `PROMPTLENS_EXAMPLE_MODEL` overrides the default model. With no credential
-set it falls back to a deterministic simulated adapter that echoes during the
-attribution sweep and returns a scripted rewrite, so it still runs offline and as
-a CI smoke test.
+This makes **real provider calls** — the same model answers the attribution
+sweep and proposes the rewrite (one extra call). The default provider is
+`openai`; pick another with `PROMPTLENS_EXAMPLE_PROVIDER` and override the
+model with `PROMPTLENS_EXAMPLE_MODEL` (see [`_shared.py`](../_shared.py)).
 
-## What you should see
+## Example output
 
-With the offline fallback (a real model proposes its own rewrite):
+(output from a gpt-5.4-mini run; the rewrite and rationale are
+model-generated and will vary)
 
-| Field           | Value                                                            |
-| --------------- | ---------------------------------------------------------------- |
-| original prompt | "You are an extremely helpful… Summarize… in exactly three bullet points. Feel free… Thanks so much…" |
-| proposed prompt | "Summarize the input text in exactly three bullet points."        |
-| rationale       | Kept the load-bearing three-bullet constraint; pruned filler.    |
+```text
+Provider: openai · model: gpt-5.4-mini
+Attribution-informed prompt rewrite:
+
+                       promptlens Optimization
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Field           ┃ Value                                               ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ original prompt │ You are an extremely helpful, friendly, and         │
+│                 │ knowledgeable assistant. Summarize the input text   │
+│                 │ in exactly three bullet points. Feel free to be as  │
+│                 │ detailed and thorough as you possibly can. Thanks   │
+│                 │ so much for your hard work on this important task.  │
+├─────────────────┼─────────────────────────────────────────────────────┤
+│ proposed prompt │ Summarize the input text in exactly three bullet    │
+│                 │ points.                                             │
+├─────────────────┼─────────────────────────────────────────────────────┤
+│ rationale       │ Attribution put 72% of the measured drift on the    │
+│                 │ three-bullet constraint, so it is kept verbatim.    │
+│                 │ The courtesy filler showed no measured effect, and  │
+│                 │ "as detailed and thorough as you possibly can"      │
+│                 │ conflicts with the three-bullet limit, so both      │
+│                 │ were removed.                                       │
+└─────────────────┴─────────────────────────────────────────────────────┘
+
+Lens, not oracle: the proposed rewrite is a candidate, not a verified
+improvement. Re-run attribution and a task metric before adopting it.
+```
 
 ## Running it from the CLI
 
 ```bash
 promptlens optimize \
   --prompt ./prompt.md \
-  --provider openai --model gpt-4o-mini
+  --provider openai --model gpt-5.4-mini
 ```
 
-From the SDK, pass an `LLMPromptOptimizer` to
+The CLI runs the baseline first, shows the projected sweep cost, and asks
+before spending the remaining calls (`--yes` skips the question, `--dry-run`
+stops after the baseline); the final rewrite adds one call on top of the
+projection. From the SDK, pass an `LLMPromptOptimizer` to
 `AttributionHarness(..., optimizer=...)` and call `harness.optimize(prompt)`.
 
 ## Lens, not oracle

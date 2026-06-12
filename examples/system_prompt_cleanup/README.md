@@ -10,50 +10,88 @@ the two lines that actually shape the output rise to the top.
 ## Run it
 
 ```bash
-python examples/system_prompt_cleanup/run.py
+OPENAI_API_KEY=sk-... python examples/system_prompt_cleanup/run.py
 ```
 
-By default this calls a **real provider**. Set `OPENAI_API_KEY` (or
-`ANTHROPIC_API_KEY` plus `PROMPTLENS_EXAMPLE_PROVIDER=anthropic`) to choose the
-model; `PROMPTLENS_EXAMPLE_MODEL` overrides the default model. With no credential
-set it falls back to a small deterministic simulated adapter whose output is
-shaped only by the "valid JSON" and "confidence score" instructions, so it still
-runs offline and as a CI smoke test.
+This makes **real provider calls** (one per sentence, plus the baseline). The
+default provider is `openai`; pick another with `PROMPTLENS_EXAMPLE_PROVIDER`
+and override the model with `PROMPTLENS_EXAMPLE_MODEL` (see
+[`_shared.py`](../_shared.py)).
 
-## What you should see
+## Example output
 
-With the offline fallback (a real model will vary):
+(output from a gpt-5.4-mini run; your numbers will vary)
 
-| Feature      | Share | Line                                           |
-| ------------ | ----- | ---------------------------------------------- |
-| `sentence_2` | ~58%  | "Always respond in valid JSON."                |
-| `sentence_4` | ~42%  | "Include a confidence score…"                  |
-| others       | 0%    | Polite boilerplate (no measured effect)         |
+```text
+Provider: openai · model: gpt-5.4-mini
+Attribution over a long system prompt (drift: output length):
 
-The two formatting instructions carry all of the measured drift; the friendly
-boilerplate carries none.
+                          promptlens Attribution
+┏━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Feature    ┃  Value ┃ Share ┃ Weight      ┃ Text                       ┃
+┡━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ sentence_2 │ 0.6418 │ 57.4% │ ███████████ │ Always respond in valid J… │
+│ sentence_4 │ 0.4471 │ 40.0% │ ████████    │ Include a confidence scor… │
+│ sentence_5 │ 0.0291 │  2.6% │ █           │ Never share internal comp… │
+│ sentence_1 │ 0.0000 │  0.0% │             │ You are a friendly and he… │
+│ sentence_3 │ 0.0000 │  0.0% │             │ Be polite and empathetic … │
+│ sentence_6 │ 0.0000 │  0.0% │             │ Remember that the custome… │
+└────────────┴────────┴───────┴─────────────┴────────────────────────────┘
+                          Largest output drifts
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Removed features ┃  Score ┃ Output without them                        ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ sentence_2       │ 0.6418 │ Hello! I'd be happy to help with that. He… │
+│ sentence_4       │ 0.4471 │ {"answer": "Your order shipped on Tuesda…  │
+│ sentence_5       │ 0.0291 │ {"answer": "Your order shipped on Tuesda…  │
+└──────────────────┴────────┴────────────────────────────────────────────┘
+
+Load-bearing lines (keep and tighten):
+  - Always respond in valid JSON.
+  - Include a confidence score between 0 and 1 for your answer.
+  - Never share internal company secrets.
+
+Dead-weight under this scorer (candidates to review, not auto-delete):
+  - You are a friendly and helpful customer support assistant.
+  - Be polite and empathetic with every customer.
+  - Remember that the customer is always the hero of their own story.
+
+Lens, not oracle: 'no measured effect' under a length/drift scorer is not
+proof a line is useless. Verify with a task metric before trimming.
+```
+
+The two formatting instructions carry nearly all of the measured drift; the
+friendly boilerplate carries none.
 
 ## Using a semantic scorer
 
-The script scores output-length drift, which any adapter supports. For semantic
-drift that reflects meaning rather than length, run the same prompt through the
-CLI with the provider-backed `embedding` scorer:
+The script scores output-length drift, which any adapter supports. For drift
+that reflects meaning rather than length, run the same prompt through the CLI
+with the `embedding` scorer. By default it embeds **locally** with a Hugging
+Face sentence-transformers model — real semantic embeddings, no embedding API
+key (install the `promptlens[huggingface]` extra; `embedding-local` is an alias
+for the same client):
 
 ```bash
 promptlens explain \
   --prompt examples/system_prompt_cleanup/system_prompt.txt \
-  --provider openai --model gpt-4o-mini \
-  --scorer embedding --scorer-config examples/system_prompt_cleanup/embedding.json
+  --provider openai --model gpt-5.4-mini \
+  --scorer embedding
 ```
 
-`embedding.json` selects the real provider-backed embedding scorer:
+To embed with the hosted OpenAI API instead, pass a config —
+[`embedding.json`](embedding.json) selects it:
 
 ```json
 { "provider": "openai", "model": "text-embedding-3-small" }
 ```
 
-(The offline `embedding-local` scorer is a deterministic text-shape fallback for
-smoke tests only — never a semantic signal.)
+```bash
+promptlens explain \
+  --prompt examples/system_prompt_cleanup/system_prompt.txt \
+  --provider openai --model gpt-5.4-mini \
+  --scorer embedding --scorer-config examples/system_prompt_cleanup/embedding.json
+```
 
 ## Lens, not oracle
 
