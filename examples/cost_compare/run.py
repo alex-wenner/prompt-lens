@@ -1,16 +1,17 @@
-"""Price an attribution run across providers before spending a cent.
+"""Price an attribution run across providers from one real baseline call.
 
 Attribution multiplies provider calls by feature count, so the same experiment
 can cost very different amounts depending on the model — and running it on a
-local model costs nothing. This example estimates the spend for one prompt
-across a frontier model, a mid-tier model, a cheap model, and a local model,
-entirely offline (no provider calls, no credentials), using the same cost
-estimator the CLI's ``--dry-run`` flag uses.
+local model costs nothing. This example runs the **baseline completion once**
+on a real provider, reads the provider's own metered token usage off that
+response, and projects the sweep cost across a frontier model, a mid-tier
+model, a cheap model, and a free local model. One call, real numbers, no
+tokenizer guesswork — the same flow the CLI's cost gate uses before every run.
 
-Config permutations this example pins: the ``estimate`` path with
-``compare_models`` (one token count, many price tables), and how the
+Config permutations this example pins: ``estimate_from_baseline`` with
+``compare_models`` (one metered baseline, many price tables), and how the
 **perturbation scale** multiplies the bill — ``quick`` versus ``full`` change
-the evaluation count, and the estimate tracks it.
+the evaluation count, and the projection tracks it.
 """
 
 from __future__ import annotations
@@ -20,71 +21,69 @@ from pathlib import Path
 from typing import Any
 
 from promptlens import AttributionHarness
-from promptlens.adapters import EchoAdapter
 from promptlens.core.base import Adapter
+from promptlens.core.result import CostEstimate
 from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import SentenceSegmenter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _shared import load_text, print_footer  # noqa: E402
+from _shared import load_text, print_footer, require_adapter  # noqa: E402
 
 PROMPT = load_text(__file__, "prompt.md").strip()
 
-# Primary plus comparison models, spanning a frontier model down to a free
-# local one. All must be keys in promptlens' built-in pricing table.
-PRIMARY_MODEL = "anthropic/claude-opus-4-8"
+# Comparison models, spanning a frontier model down to a free local one. All
+# are keys in promptlens' built-in pricing table.
 COMPARE_MODELS = [
+    "anthropic/claude-opus-4-8",
     "openai/gpt-5.4",
-    "openai/gpt-5.4-mini",
     "anthropic/claude-haiku-4-5",
     "ollama/llama3.2",
 ]
 
 
-def _estimate(scale: str) -> Any:
-    """Estimate the attribution cost for the prompt at one perturbation scale.
-
-    Uses the offline echo adapter: segmentation and masking are local, so the
-    estimate is exact about token counts and call volume without any inference.
-    """
+def _project(adapter: Adapter, baseline: Any, scale: str) -> CostEstimate:
+    """Project the sweep cost at one perturbation scale from the shared baseline."""
     harness = AttributionHarness(
-        adapter=EchoAdapter(model=PRIMARY_MODEL),
+        adapter=adapter,
         segmenter=SentenceSegmenter(),
         scorer=LengthDriftScorer(),
         perturbation_scale=scale,
     )
-    return harness.estimate(PROMPT, compare_models=COMPARE_MODELS)
+    return harness.estimate_from_baseline(PROMPT, baseline, compare_models=COMPARE_MODELS)
 
 
 def main(adapter: Adapter | None = None) -> dict[str, Any]:
-    """Estimate and print the per-provider cost at two perturbation scales."""
-    del adapter  # this example is inherently offline; the parameter keeps the shared shape
-    quick = _estimate("quick")
-    full = _estimate("full")
+    """Run one baseline call, then project the cost at two perturbation scales."""
+    adapter = adapter if adapter is not None else require_adapter()
+    baseline = adapter.complete(PROMPT)  # the only provider call this example makes
 
-    print("Estimated attribution cost across providers (no provider calls made):\n")
+    quick = _project(adapter, baseline, "quick")
+    full = _project(adapter, baseline, "full")
+
+    print("Projected attribution cost from one real baseline call:\n")
     quick.print()
     print(
         f"\nAt 'quick' scale that is {quick.evaluations} evaluations; 'full' scale "
-        f"runs {full.evaluations} and costs ${full.total_usd:.6f} on {PRIMARY_MODEL}."
+        f"runs {full.evaluations} and projects to ${full.total_usd:.4f} on {quick.model}."
     )
     print(
-        f"The same run on a local model (ollama/llama3.2) is "
+        f"The same run priced on a local model (ollama/llama3.2) is "
         f"${quick.comparisons['ollama/llama3.2']:.2f} — the cost case for local "
         f"inference in one line."
     )
     print_footer(
-        "estimates use built-in pricing and a conservative token count; check "
-        "live provider pricing before budgeting, and use --exact-tokens on the "
-        "CLI for an exact (still inference-free) Anthropic count."
+        "projections use the provider's real metered usage for this baseline and "
+        "promptlens' built-in pricing table; check live provider pricing before "
+        "budgeting."
     )
     return {
-        "primary_model": PRIMARY_MODEL,
+        "model": quick.model,
         "quick_total_usd": quick.total_usd,
         "full_total_usd": full.total_usd,
         "comparisons": quick.comparisons,
         "quick_evaluations": quick.evaluations,
         "full_evaluations": full.evaluations,
+        "baseline_input_tokens": quick.baseline_input_tokens,
     }
 
 

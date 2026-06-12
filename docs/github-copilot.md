@@ -59,7 +59,8 @@ promptlens explain \
   --model gpt-5.4
 ```
 
-Estimate cost before a live run (no provider calls are made):
+Project the sweep cost before committing to it (runs the baseline — exactly one
+provider call):
 
 ```bash
 promptlens estimate \

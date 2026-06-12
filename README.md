@@ -54,23 +54,13 @@ New here? The interactive wizard walks through every choice — provider, segmen
 promptlens wizard
 ```
 
-Or estimate the cost of an attribution run without making provider calls:
+Every run is **cost-gated by the real baseline call**: promptlens runs the unmasked prompt once, shows the model's reply (and tool trajectory), reads the provider's own metered token usage off that response, projects the sweep cost as baseline usage × the number of planned perturbations, and asks before spending the rest. There is no tokenizer guesswork anywhere — no tiktoken, no character heuristics, just the provider's real numbers:
 
 ```bash
-promptlens estimate --prompt "Write a haiku about testing" --model openai/gpt-4o-mini
+promptlens explain --prompt ./prompt.md --provider openai --segmenter auto
 ```
 
-Or skip the separate step: `--dry-run` prints the estimate and exits, `--confirm` shows it and asks before spending, and `--segmenter auto` picks a segmenter from the prompt's shape. Input tokens are counted per actual masked prompt — with `tiktoken` for OpenAI-family models when installed, a conservative heuristic otherwise, or exactly via the provider's free `count_tokens` metering endpoint with `--exact-tokens` (anthropic; needs credentials but runs no inference):
-
-```bash
-promptlens explain --prompt ./prompt.md --provider openai --segmenter auto --confirm
-```
-
-Run the offline example pipeline with the built-in echo adapter:
-
-```bash
-promptlens explain --prompt "One sentence. Another sentence."
-```
+`--dry-run` stops after the baseline (one call) and just shows the projection; `--yes/-y` skips the question for scripted runs; `promptlens estimate` is the standalone version of the same baseline-derived projection, with `--compare` to price the identical sweep on other models.
 
 Use the SDK directly:
 
@@ -95,7 +85,7 @@ result.print()
 On a production-sized instruction set, masking one sentence at a time gets expensive — a 60-sentence ops prompt is 60+ calls per sweep, mostly spent confirming boilerplate is boilerplate. **Drill-down** attributes coarse sections first, then re-attributes only the top sections sentence by sentence with the rest of the prompt intact, and reports what it saved:
 
 ```bash
-promptlens explain --prompt ./ops-prompt.md --provider anthropic --drilldown --confirm
+promptlens explain --prompt ./ops-prompt.md --provider anthropic --drilldown
 ```
 
 From the SDK: `explain_drilldown(harness, prompt, top_k=2)`. See the [order-operations example](examples/order_operations_agent/) for it running against a realistic eight-section SOP.
@@ -105,7 +95,7 @@ For robustness checks, `explain` can also run optional supplementary LLM rewrite
 Every result also shows its **largest output drifts** — the concrete outputs the model produced when the most load-bearing features were masked — alongside the ranked table. To go from numbers to narrative, `--synopsis` makes one extra LLM call that hands the full evidence (ranked features, drift examples, baseline output, tool paths) to a model and asks for a plain-language summary: what carries the output, what is dead weight, what was surprising, what to try next. The synopsis model does not have to be the model under attribution — summarizing structured evidence is easy work, so point it at a local model and keep the narrative step free:
 
 ```bash
-promptlens explain --prompt ./prompt.md --provider anthropic --confirm \
+promptlens explain --prompt ./prompt.md --provider anthropic \
   --synopsis --synopsis-provider ollama --synopsis-model llama3.2
 ```
 
@@ -125,12 +115,12 @@ The proposed rewrite is returned for review, never adopted automatically, and th
 
 ## Examples
 
-The [`examples/`](examples/) directory has seven runnable walkthroughs (no API keys required — they fall back to deterministic offline adapters), each pinning a different provider and config permutation:
+The [`examples/`](examples/) directory has seven runnable walkthroughs, each pinning a different provider and config permutation. They all make **real provider calls** (set `OPENAI_API_KEY`, or pick another provider with `PROMPTLENS_EXAMPLE_PROVIDER`), and each README shows the example's actual output:
 
 - [`order_operations_agent/`](examples/order_operations_agent/) ⭐ — the flagship: a realistic eight-section operations SOP (business objects, refund policy, escalation matrix, output contract) attributed coarse-to-fine with drill-down and argument-weighted tool drift.
 - [`local_inference/`](examples/local_inference/) — run the whole loop *and* its synopsis on a local Ollama model: `DropMasker`, paragraph segmentation, `LLMSynopsisWriter`, $0.
 - [`interaction_effects/`](examples/interaction_effects/) — why leave-one-out scores two genuinely load-bearing instructions as dead weight, and how the random-coalition (Banzhaf) sampler recovers them.
-- [`cost_compare/`](examples/cost_compare/) — estimate a run's cost across a frontier, mid-tier, cheap, and free local model before spending, with `compare_models`.
+- [`cost_compare/`](examples/cost_compare/) — run one real baseline call, then project the sweep's cost across a frontier, mid-tier, cheap, and free local model with `compare_models`.
 - [`tool_routing_bug/`](examples/tool_routing_bug/) — find the tool-schema description that makes an agent call the wrong tool, then prove the fix with a before/after tool-accuracy metric.
 - [`system_prompt_cleanup/`](examples/system_prompt_cleanup/) — separate the load-bearing lines of a long system prompt from inert dead weight.
 - [`optimize_before_after/`](examples/optimize_before_after/) — turn attribution evidence into a concrete prompt rewrite.
@@ -141,9 +131,9 @@ The examples README maps **every attribution calculator** (each scorer, both sam
 python examples/order_operations_agent/run.py
 ```
 
-## Scorers: offline vs. semantic
+## Semantic scoring
 
-The CLI `embedding` scorer is provider-backed and semantic — select it with a scorer config naming a provider, e.g. `{"provider": "openai", "model": "text-embedding-3-small"}`. For fully offline smoke runs, the `embedding-local` scorer is a deterministic text-shape fallback; it is **not** semantic and should never be used for real attribution. See the [detailed guide](docs/detailed-guide.md) for the full scorer list and the drift-vs-objective distinction.
+The `embedding` scorer is semantic. By default it embeds locally with a Hugging Face `sentence-transformers` model (`pip install -e '.[huggingface]'`) — real semantic drift with no API key and no per-call cost. Point it at the hosted OpenAI embeddings API instead with a scorer config: `{"provider": "openai", "model": "text-embedding-3-small"}`. The clients live one provider per module under `promptlens/scorers/embeddings/`. See the [detailed guide](docs/detailed-guide.md) for the full scorer list and the drift-vs-objective distinction.
 
 For agent trajectories, the `tool-args` scorer extends tool-sequence drift down into the **arguments** each tool was called with, with explicit per-parameter weights — so you decide whether an agent passing `"reason": undefined` should swing the attribution (by default an explicit null is treated as an omitted parameter, and argument churn can never outweigh calling a different tool). See [weighting tool-call parameters](docs/detailed-guide.md#weighting-tool-call-parameters).
 

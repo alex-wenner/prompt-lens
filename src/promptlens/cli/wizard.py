@@ -2,16 +2,21 @@
 
 ``promptlens wizard`` walks through every choice an attribution run needs —
 provider, model, segmentation, drill-down, scorer, masking, scale, synopsis —
-with explanations and sensible defaults at each step, shows the cost estimate
-before any provider call, runs the experiment, and finally prints the
-equivalent non-interactive ``promptlens explain`` command so the configured
-run can be scripted or shared.
+with explanations and sensible defaults at each step. It then runs the real
+baseline completion, shows the model's reply (and tool trajectory), projects
+the sweep cost from the baseline's metered usage, and asks before spending the
+rest. It finishes by printing the equivalent non-interactive ``promptlens
+explain`` command so the configured run can be scripted or shared.
+
+Free-text questions use prompt_toolkit when attached to a terminal (tab
+completion for file paths); menus and results render with rich.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,31 +24,33 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
+from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
 from promptlens import AttributionHarness, explain_drilldown
 from promptlens.cli.banner import print_banner
 from promptlens.cli.factories import build_adapter, build_masker, build_sampler, build_scorer
+from promptlens.cli.render import render_baseline, render_tools
 from promptlens.core.base import Scorer
 from promptlens.reporters import LLMSynopsisWriter
-from promptlens.scorers import ToolAccuracyScorer
+from promptlens.scorers import EmbeddingScorer, OpenAIEmbeddingClient, ToolAccuracyScorer
 
 _PROVIDERS: list[tuple[str, str]] = [
-    ("echo", "offline, free — returns the prompt; great for a first try"),
     ("openai", "OpenAI via OPENAI_API_KEY"),
     ("anthropic", "Anthropic via ANTHROPIC_API_KEY"),
+    ("gemini", "Google Gemini via GEMINI_API_KEY"),
+    ("grok", "xAI Grok via XAI_API_KEY"),
     ("bedrock", "Amazon Bedrock via AWS credentials"),
     ("copilot", "GitHub Copilot via GITHUB_COPILOT_TOKEN"),
-    ("grok", "xAI Grok via XAI_API_KEY"),
-    ("gemini", "Google Gemini via GEMINI_API_KEY"),
     ("ollama", "local models, free — defaults to localhost:11434"),
     ("openai-compatible", "any OpenAI-compatible endpoint (vLLM, gateways)"),
+    ("echo", "offline, free — returns the prompt; smoke runs only"),
 ]
 
 _SCORERS: list[tuple[str, str]] = [
-    ("length", "output-length drift; offline, works with any provider"),
-    ("embedding-local", "deterministic text-shape drift; offline smoke runs only"),
+    ("length", "output-length drift; free, works with any provider"),
+    ("embedding", "semantic drift; local Hugging Face embeddings by default (no key)"),
     ("logprob", "token log-probability drift; needs a logprobs-capable model"),
     ("tool-sequence", "did the model call different tools, in a different order?"),
     ("tool-args", "tool-sequence drift plus weighted tool-argument changes"),
@@ -72,22 +79,27 @@ def run_wizard() -> None:
 
     from promptlens.cli.main import _read_prompt, _read_tools, _segmenter
 
-    prompt_text = _read_prompt(Prompt.ask("[bold]Prompt text or path to a prompt file[/bold]"))
+    _step(console, 1, "Prompt")
+    prompt_text = _read_prompt(_ask_path(console, "Prompt text or path to a prompt file"))
 
-    provider = _choice(console, "Provider", _PROVIDERS, default="echo")
+    _step(console, 2, "Provider")
+    provider = _choice(console, "Provider", _PROVIDERS, default="openai")
     model = Prompt.ask("Model id", default="auto")
     model_id = None if model == "auto" else model
     base_url = _ask_base_url(provider)
 
+    _step(console, 3, "Granularity")
     segmenter_name = _choice(console, "Segmenter", _SEGMENTERS, default="auto")
     drilldown, drilldown_top = _ask_drilldown(console, prompt_text, segmenter_name)
 
+    _step(console, 4, "Scoring")
     scorer_name = _choice(console, "Scorer", _SCORERS, default="length")
     scorer, scorer_config = _build_scorer(scorer_name)
 
-    tools_path = Prompt.ask("Tool schema JSON file (optional)", default="none")
+    tools_path = _ask_path(console, "Tool schema JSON file (optional)", default="none")
     tools = _read_tools(None if tools_path == "none" else tools_path)
 
+    _step(console, 5, "Perturbations")
     masker_name = _choice(console, "Masker", _MASKERS, default="placeholder")
     scale = Prompt.ask(
         "Perturbation scale (repeats per sweep: quick=1, standard=3, full=5)",
@@ -109,21 +121,33 @@ def run_wizard() -> None:
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    console.print()
-    harness.estimate(prompt_text, tools=tools).print()
+    _step(console, 6, "Baseline & cost gate")
+    render_tools(tools, console)
+    with console.status("[cyan]Running the baseline completion…[/cyan]"):
+        baseline = harness.run_baseline(prompt_text, tools=tools)
+    render_baseline(baseline, console)
+    estimate = harness.estimate_from_baseline(prompt_text, baseline, tools=tools)
+    estimate.print(console)
     if drilldown:
         console.print(
-            "[dim]The estimate covers the overview pass; each refined section "
+            "[dim]The projection covers the overview pass; each refined section "
             "adds roughly one sentence sweep on top.[/dim]"
         )
-    if not Confirm.ask("\n[bold]Run attribution now?[/bold]", default=True):
+    if not Confirm.ask(
+        f"\n[bold]Run the remaining {estimate.evaluations} provider calls?[/bold]",
+        default=True,
+    ):
+        console.print("[yellow]Stopped at the cost gate; only the baseline ran.[/yellow]")
         raise typer.Exit()
 
+    _step(console, 7, "Attribution")
     if drilldown:
-        result: Any = explain_drilldown(harness, prompt_text, tools=tools, top_k=drilldown_top)
+        result: Any = explain_drilldown(
+            harness, prompt_text, tools=tools, top_k=drilldown_top, baseline=baseline
+        )
         synopsis_target = result.overview
     else:
-        result = harness.explain(prompt_text, tools=tools)
+        result = harness.explain(prompt_text, tools=tools, baseline=baseline)
         synopsis_target = result
     if synopsis:
         writer = LLMSynopsisWriter(
@@ -140,7 +164,7 @@ def run_wizard() -> None:
         )
 
     console.print()
-    result.print()
+    result.print(console)
 
     if Confirm.ask("\nSave the full result as JSON?", default=False):
         path = Prompt.ask("Output path", default="attribution.json")
@@ -164,6 +188,26 @@ def run_wizard() -> None:
         synopsis_provider=synopsis_provider,
         synopsis_model=synopsis_model,
     )
+
+
+def _step(console: Console, number: int, title: str) -> None:
+    console.print(Rule(f"[bold cyan]Step {number}[/bold cyan] · {title}", align="left"))
+
+
+def _ask_path(console: Console, message: str, *, default: str | None = None) -> str:
+    """Ask for free text with file-path tab completion when on a terminal."""
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        from prompt_toolkit import prompt as pt_prompt
+        from prompt_toolkit.completion import PathCompleter
+
+        suffix = f" [{default}]" if default else ""
+        answer = pt_prompt(
+            f"{message}{suffix}: ", completer=PathCompleter(expanduser=True)
+        ).strip()
+        return answer or (default or "")
+    if default is not None:
+        return Prompt.ask(f"[bold]{message}[/bold]", default=default)
+    return Prompt.ask(f"[bold]{message}[/bold]")
 
 
 def _choice(
@@ -217,6 +261,15 @@ def _build_scorer(scorer_name: str) -> tuple[Scorer, dict[str, Any] | None]:
         )
         config: dict[str, Any] = {"expected_tool": expected_tool, "required_args": required}
         return ToolAccuracyScorer(expected_tool=expected_tool, required_args=required), config
+    if scorer_name == "embedding":
+        provider = Prompt.ask(
+            "Embeddings via",
+            choices=["huggingface", "openai"],
+            default="huggingface",
+        )
+        if provider == "openai":
+            return EmbeddingScorer(OpenAIEmbeddingClient()), {"provider": "openai"}
+        return build_scorer(scorer_name), None
     return build_scorer(scorer_name), None
 
 

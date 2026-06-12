@@ -25,6 +25,7 @@ from promptlens.maskers import DropMasker, FillerMasker, PlaceholderMasker
 from promptlens.samplers import LeaveOneOutSampler, RandomCoalitionSampler
 from promptlens.scorers import (
     EmbeddingScorer,
+    HuggingFaceEmbeddingClient,
     LengthDriftScorer,
     LogprobScorer,
     OpenAIEmbeddingClient,
@@ -94,25 +95,6 @@ _PROVIDER_ALIASES: dict[str, str] = {
 
 # Base number of random coalitions at scale "quick"; larger scales multiply it.
 _BASE_RANDOM_COALITIONS = 50
-
-
-class _TextEmbeddingClient:
-    """Deterministic local embedding fallback for offline CLI smoke runs.
-
-    This is **not** a semantic embedding: it derives a few cheap text-shape
-    features without contacting a provider, so it is only useful for smoke tests
-    and demos. Select it explicitly via the ``embedding-local`` scorer name. For
-    real attribution use the ``embedding`` scorer with a provider config.
-    """
-
-    def embed(self, text: str) -> Sequence[float]:
-        """Return simple text-shape features without making provider calls."""
-        char_sum = sum(ord(char) for char in text)
-        return (
-            float(len(text)),
-            float(text.count(" ")),
-            float(char_sum % 997),
-        )
 
 
 def build_adapter(
@@ -289,13 +271,16 @@ def build_scorer(name: str, *, config_path: str | None = None) -> Scorer:
     config = _load_config(config_path)
     if scorer_key == "length":
         return LengthDriftScorer()
-    if scorer_key in {"embedding-local", "text-shape"}:
-        # Explicit opt-in to the deterministic text-shape fallback (offline only).
-        return EmbeddingScorer(_TextEmbeddingClient())
+    if scorer_key in {"embedding-local", "embedding-huggingface"}:
+        # Real semantic embeddings on a local sentence-transformers model.
+        model = config.get("model")
+        if model is not None and not isinstance(model, str):
+            msg = "embedding scorer 'model' must be a string"
+            raise ValueError(msg)
+        return EmbeddingScorer(
+            HuggingFaceEmbeddingClient(**({"model": model} if model else {}))
+        )
     if scorer_key == "embedding":
-        # Real semantic embeddings require a provider; the offline toy is opt-in
-        # under the embedding-local name so plain "embedding" is never mistaken
-        # for a semantic scorer.
         return EmbeddingScorer(_build_embedding_client(config))
     if scorer_key == "logprob":
         return LogprobScorer()
@@ -342,18 +327,18 @@ def _repeats_from_scale(scale: str | int) -> int:
 
 
 def _build_embedding_client(config: dict[str, Any]) -> Any:
-    """Build a provider-backed embedding client from scorer config.
+    """Build an embedding client for the semantic ``embedding`` scorer.
 
-    The ``embedding`` scorer is semantic and therefore needs a provider. Config
-    must name a ``provider`` (``openai`` or ``openai-compatible``); for offline
-    smoke runs use the ``embedding-local`` scorer instead.
+    Config selects the ``provider``: ``openai`` (hosted API),
+    ``openai-compatible`` (any compatible endpoint), or ``huggingface``
+    (local sentence-transformers). With no config the scorer defaults to the
+    local Hugging Face model — real semantic embeddings with no API key.
     """
-    provider = config.get("provider")
+    provider = config.get("provider", "huggingface")
     if not isinstance(provider, str) or not provider.strip():
         msg = (
-            "embedding scorer requires scorer config with a 'provider', e.g. "
-            '{"provider": "openai", "model": "text-embedding-3-small"}. '
-            "Use the 'embedding-local' scorer for an offline deterministic fallback."
+            "embedding scorer 'provider' must be 'openai', 'openai-compatible', "
+            "or 'huggingface'"
         )
         raise ValueError(msg)
     provider_key = provider.strip().lower()
@@ -361,6 +346,8 @@ def _build_embedding_client(config: dict[str, Any]) -> Any:
     if model is not None and not isinstance(model, str):
         msg = "embedding scorer 'model' must be a string"
         raise ValueError(msg)
+    if provider_key == "huggingface":
+        return HuggingFaceEmbeddingClient(**({"model": model} if model else {}))
     if provider_key == "openai":
         return OpenAIEmbeddingClient(model=model or "text-embedding-3-small")
     if provider_key == "openai-compatible":

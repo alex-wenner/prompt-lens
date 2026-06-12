@@ -204,9 +204,15 @@ def test_build_scorer_creates_correct_scorer_types(tmp_path) -> None:
     ) == 1.0
 
 
-def test_build_scorer_embedding_requires_provider_config() -> None:
-    with pytest.raises(ValueError, match="embedding-local"):
-        build_scorer("embedding")
+def test_build_scorer_embedding_defaults_to_local_huggingface() -> None:
+    from promptlens.scorers import HuggingFaceEmbeddingClient
+
+    scorer = build_scorer("embedding")
+
+    assert isinstance(scorer, EmbeddingScorer)
+    assert isinstance(scorer.embedding_client, HuggingFaceEmbeddingClient)
+    # Constructing the scorer must not load the model; that happens lazily.
+    assert scorer.embedding_client._encoder is None
 
 
 def test_build_scorer_embedding_builds_openai_client(tmp_path) -> None:

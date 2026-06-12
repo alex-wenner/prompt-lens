@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -25,21 +26,73 @@ def _plain(text: str) -> Text:
     return Text(text)
 
 
+def format_tool_call(call: dict[str, Any]) -> str:
+    """Render one tool call as ``name(arg=value, …)`` for compact traces."""
+    name = call.get("name") or "?"
+    arguments = call.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except (TypeError, ValueError):
+            return f"{name}({arguments})"
+    if not isinstance(arguments, dict) or not arguments:
+        return f"{name}()"
+    rendered = ", ".join(f"{key}={json.dumps(value)}" for key, value in arguments.items())
+    return f"{name}({rendered})"
+
+
+def tool_trace(tool_calls: list[dict[str, Any]]) -> str:
+    """Render a list of tool calls, in order, as a one-line trace."""
+    if not tool_calls:
+        return "(no tool calls)"
+    return " → ".join(format_tool_call(call) for call in tool_calls)
+
+
+def _attribution_table(result: AttributionResult, *, title: str | Text) -> Table:
+    """Build the ranked feature table with colored share bars."""
+    table = Table(title=title, title_style="bold")
+    table.add_column("Feature", style="cyan")
+    table.add_column("Value", justify="right")
+    table.add_column("Share", justify="right")
+    table.add_column("Weight")
+    table.add_column("Text", style="dim")
+    for rank, (attribution, share) in enumerate(result.ranked()):
+        bar_style = "green" if rank == 0 else "cyan" if share >= 0.1 else "dim"
+        bar = Text("█" * round(share * _MAX_BAR_WIDTH), style=bar_style)
+        table.add_row(
+            _plain(attribution.feature.name),
+            f"{attribution.value:.4f}",
+            f"{share * 100:.1f}%",
+            bar,
+            _plain(attribution.feature.text.replace("\n", " ")[:80]),
+        )
+    return table
+
+
 class CostEstimate(BaseModel):
-    """Estimated spend before provider calls are made."""
+    """Projected sweep spend derived from the baseline call's real provider usage.
+
+    Built by :func:`promptlens.core.pricing.project_cost` after the baseline
+    completion has run: the provider's metered input/output tokens for that one
+    call are multiplied across the planned masked-prompt evaluations. There is
+    no local tokenizer or heuristic anywhere in this number.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     model: str
     features: int
     evaluations: int
+    baseline_input_tokens: int
+    baseline_output_tokens: int
     input_tokens: int
     output_tokens: int
     input_cost_usd: float
     output_cost_usd: float
     pricing_updated: str
     comparisons: dict[str, float] = Field(default_factory=dict)
-    token_counter: str = "heuristic"
+    usage_available: bool = True
+    priced: bool = True
 
     @property
     def total_usd(self) -> float:
@@ -53,21 +106,46 @@ class CostEstimate(BaseModel):
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)
 
-    def print(self) -> None:
-        table = Table(title="CostEstimate")
-        table.add_column("Metric")
-        table.add_column("Value", justify="right")
-        table.add_row("model", self.model)
-        table.add_row("features", str(self.features))
-        table.add_row("evaluations", str(self.evaluations))
-        table.add_row("input tokens", f"{self.input_tokens} ({self.token_counter})")
-        table.add_row("output tokens", str(self.output_tokens))
-        table.add_row("input cost", f"${self.input_cost_usd:.6f}")
-        table.add_row("output cost", f"${self.output_cost_usd:.6f}")
-        table.add_row("total", f"${self.total_usd:.6f}")
+    def print(self, console: Console | None = None) -> None:
+        console = console or Console()
+        table = Table(show_header=False, box=None, padding=(0, 1))
+        table.add_column(style="bold")
+        table.add_column(justify="right")
+        table.add_row("Model", _plain(self.model))
+        table.add_row("Features to attribute", str(self.features))
+        table.add_row("Provider calls remaining", str(self.evaluations))
+        if self.usage_available:
+            table.add_row(
+                "Baseline usage (metered)",
+                f"{self.baseline_input_tokens} in / {self.baseline_output_tokens} out",
+            )
+            table.add_row(
+                "Projected tokens",
+                f"{self.input_tokens:,} in / {self.output_tokens:,} out",
+            )
+        else:
+            table.add_row(
+                "Baseline usage", "[yellow]not reported by this provider[/yellow]"
+            )
+        if self.priced and self.usage_available:
+            table.add_row("Input cost", f"${self.input_cost_usd:.4f}")
+            table.add_row("Output cost", f"${self.output_cost_usd:.4f}")
+            table.add_row("Projected total", f"[bold green]${self.total_usd:.4f}[/bold green]")
+        elif self.usage_available:
+            table.add_row(
+                "Projected total",
+                "[yellow]unknown — model not in the pricing table[/yellow]",
+            )
         for model, total in self.comparisons.items():
-            table.add_row(f"compare {model}", f"${total:.6f}")
-        Console().print(table)
+            table.add_row(Text(f"… on {model}", style="dim"), f"${total:.4f}")
+        console.print(
+            Panel(
+                table,
+                title="[bold]Projected sweep cost[/bold]",
+                subtitle=f"[dim]baseline-derived · pricing updated {self.pricing_updated}[/dim]",
+                border_style="cyan",
+            )
+        )
 
 
 class CoalitionEvaluation(BaseModel):
@@ -184,6 +262,7 @@ class AttributionResult(BaseModel):
                 ],
                 "score": evaluation.score,
                 "output_text": evaluation.output.text,
+                "tool_calls": evaluation.output.tool_calls,
             }
             for evaluation in ordered[:limit]
         ]
@@ -226,36 +305,31 @@ class AttributionResult(BaseModel):
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)
 
-    def print(self) -> None:
-        table = Table(title="promptlens Attribution")
-        table.add_column("Feature")
-        table.add_column("Value", justify="right")
-        table.add_column("Share", justify="right")
-        table.add_column("Weight")
-        table.add_column("Text")
-        for attribution, share in self.ranked():
-            bar = "█" * round(share * _MAX_BAR_WIDTH)
-            table.add_row(
-                _plain(attribution.feature.name),
-                f"{attribution.value:.4f}",
-                f"{share * 100:.1f}%",
-                bar,
-                _plain(attribution.feature.text.replace("\n", " ")[:80]),
-            )
-        Console().print(table)
+    def print(self, console: Console | None = None) -> None:
+        console = console or Console()
+        table = _attribution_table(self, title="promptlens Attribution")
+        console.print(table)
         highlights = self.drift_highlights()
         if highlights:
-            highlight_table = Table(title="Largest output drifts")
-            highlight_table.add_column("Removed features")
+            uses_tools = bool(self.baseline_output.tool_calls) or any(
+                highlight["tool_calls"] for highlight in highlights
+            )
+            highlight_table = Table(title="Largest output drifts", title_style="bold")
+            highlight_table.add_column("Removed features", style="cyan")
             highlight_table.add_column("Score", justify="right")
-            highlight_table.add_column("Output without them")
+            if uses_tools:
+                highlight_table.add_column("Tool calls without them")
+            highlight_table.add_column("Output without them", style="dim")
             for highlight in highlights:
-                highlight_table.add_row(
+                row = [
                     _plain(", ".join(highlight["removed"]) or "(none)"),
                     f"{highlight['score']:.4f}",
-                    _plain(highlight["output_text"].replace("\n", " ")[:80]),
-                )
-            Console().print(highlight_table)
+                ]
+                if uses_tools:
+                    row.append(_plain(tool_trace(highlight["tool_calls"])[:100]))
+                row.append(_plain(highlight["output_text"].replace("\n", " ")[:80]))
+                highlight_table.add_row(*row)
+            console.print(highlight_table)
         if self.supplementary_evaluations:
             supplementary_table = Table(title="Supplementary prompt mutations")
             supplementary_table.add_column("Kind")
@@ -321,28 +395,18 @@ class DrilldownResult(BaseModel):
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)
 
-    def print(self) -> None:
-        self.overview.print()
+    def print(self, console: Console | None = None) -> None:
+        console = console or Console()
+        self.overview.print(console)
         for refinement in self.refinements:
-            table = Table(title=_plain(f"Refined: {refinement.feature.name}"))
-            table.add_column("Feature")
-            table.add_column("Value", justify="right")
-            table.add_column("Share", justify="right")
-            table.add_column("Weight")
-            table.add_column("Text")
-            for attribution, share in refinement.result.ranked():
-                bar = "█" * round(share * _MAX_BAR_WIDTH)
-                table.add_row(
-                    _plain(attribution.feature.name),
-                    f"{attribution.value:.4f}",
-                    f"{share * 100:.1f}%",
-                    bar,
-                    _plain(attribution.feature.text.replace("\n", " ")[:80]),
+            console.print(
+                _attribution_table(
+                    refinement.result, title=_plain(f"Refined: {refinement.feature.name}")
                 )
-            Console().print(table)
-        Console().print(
-            f"Drill-down used {self.provider_calls_used} provider calls vs "
-            f"~{self.flat_sweep_provider_calls} for a flat sentence sweep."
+            )
+        console.print(
+            f"[dim]Drill-down used [bold]{self.provider_calls_used}[/bold] provider calls vs "
+            f"~{self.flat_sweep_provider_calls} for a flat sentence sweep.[/dim]"
         )
 
 

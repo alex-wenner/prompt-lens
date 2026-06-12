@@ -19,17 +19,18 @@ cost, which the result reports explicitly.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from promptlens.core.base import (
     Coalition,
+    CompletionOutput,
     Feature,
     Masker,
     Segmenter,
     ToolDefinitions,
 )
 from promptlens.core.harness import AttributionHarness
-from promptlens.core.result import DrilldownRefinement, DrilldownResult
+from promptlens.core.result import CostEstimate, DrilldownRefinement, DrilldownResult
 from promptlens.segmenters import SentenceSegmenter
 
 
@@ -40,6 +41,8 @@ def explain_drilldown(
     *,
     top_k: int = 2,
     fine_segmenter: Segmenter | None = None,
+    baseline: CompletionOutput | None = None,
+    cost_gate: Callable[[CostEstimate], bool] | None = None,
 ) -> DrilldownResult:
     """Run coarse attribution, then refine the hottest features sentence by sentence.
 
@@ -53,12 +56,16 @@ def explain_drilldown(
     segmenter cannot split it into at least two parts (nothing to refine).
     Each refinement masks one fine feature at a time *inside the full prompt*,
     so refined scores stay comparable to the overview's.
+
+    ``baseline`` and ``cost_gate`` are forwarded to the overview pass (see
+    :meth:`AttributionHarness.explain`); the gate's estimate covers the
+    overview only — each refined feature adds roughly one sentence sweep.
     """
     if top_k < 0:
         msg = f"top_k must be >= 0, got {top_k}"
         raise ValueError(msg)
     fine = fine_segmenter or SentenceSegmenter()
-    overview = harness.explain(prompt, tools=tools)
+    overview = harness.explain(prompt, tools=tools, baseline=baseline, cost_gate=cost_gate)
     refinements: list[DrilldownRefinement] = []
     for attribution, _ in overview.ranked():
         if len(refinements) >= top_k:

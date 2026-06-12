@@ -9,7 +9,13 @@ from collections.abc import Sequence
 from typing import Any
 
 from promptlens.adapters.models import supports_logprobs
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, coerce_tools
+from promptlens.core.base import (
+    Adapter,
+    CompletionOutput,
+    TokenUsage,
+    ToolDefinitions,
+    coerce_tools,
+)
 
 _CHAT_COMPLETIONS_ENDPOINT = "/v1/chat/completions"
 
@@ -68,7 +74,13 @@ class OpenAIAdapter(Adapter):
         text = message.content or ""
         tool_calls = [_openai_tool_call_to_dict(call) for call in (message.tool_calls or [])]
         logprobs = _extract_logprobs(choice)
-        return CompletionOutput(text=text, tool_calls=tool_calls, logprobs=logprobs, raw=response)
+        return CompletionOutput(
+            text=text,
+            tool_calls=tool_calls,
+            logprobs=logprobs,
+            usage=_extract_usage(getattr(response, "usage", None)),
+            raw=response,
+        )
 
     def complete_batch(
         self, prompts: Sequence[str], tools: ToolDefinitions | None = None
@@ -164,12 +176,30 @@ def _completion_body_to_output(body: dict[str, Any]) -> CompletionOutput:
     logprobs = (
         [float(item["logprob"]) for item in logprobs_content] if logprobs_content else None
     )
+    usage = body.get("usage") or {}
     return CompletionOutput(
         text=message.get("content") or "",
         tool_calls=tool_calls,
         logprobs=logprobs,
+        usage=(
+            TokenUsage(
+                input_tokens=int(usage["prompt_tokens"]),
+                output_tokens=int(usage["completion_tokens"]),
+            )
+            if "prompt_tokens" in usage and "completion_tokens" in usage
+            else None
+        ),
         raw=body,
     )
+
+
+def _extract_usage(usage: Any) -> TokenUsage | None:
+    """Map the SDK usage object (prompt/completion token counts) to TokenUsage."""
+    prompt_tokens = getattr(usage, "prompt_tokens", None)
+    completion_tokens = getattr(usage, "completion_tokens", None)
+    if prompt_tokens is None or completion_tokens is None:
+        return None
+    return TokenUsage(input_tokens=int(prompt_tokens), output_tokens=int(completion_tokens))
 
 
 def _extract_logprobs(choice: Any) -> list[float] | None:

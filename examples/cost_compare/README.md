@@ -2,38 +2,71 @@
 
 **Problem:** attribution multiplies provider calls by feature count, so the same
 experiment costs very different amounts depending on the model — and you want to
-know that *before* you spend, not after. This example estimates the spend for
-one RAG-assistant prompt across a frontier model, a mid-tier model, a cheap
-model, and a free local model, entirely offline.
+know that *before* you spend, not after.
 
-It pins the `estimate` path with **`compare_models`** (count tokens once, apply
-many price tables) and shows how the **perturbation scale** multiplies the bill.
-No provider calls, no credentials.
+This example runs the baseline completion **once** on a real provider, reads
+the provider's own metered token usage off that response, and projects the
+sweep cost as `baseline usage × (evaluations + 1)`. One call, real numbers, no
+tokenizer guesswork — the same flow the CLI's cost gate uses before every
+`explain` run. It pins `estimate_from_baseline` with **`compare_models`** (one
+metered baseline, many price tables) and shows how the **perturbation scale**
+multiplies the bill (`quick` = 1 sweep, `full` = 5).
 
 ## Run it
 
 ```bash
-python examples/cost_compare/run.py
+OPENAI_API_KEY=sk-... python examples/cost_compare/run.py
 ```
 
-## What you should see
+This makes exactly **one real provider call** (the baseline). The default
+provider is `openai`; pick another with `PROMPTLENS_EXAMPLE_PROVIDER` and
+override the model with `PROMPTLENS_EXAMPLE_MODEL` (see
+[`_shared.py`](../_shared.py)).
 
-A `CostEstimate` table with one row per comparison model — the frontier model at
-the top, the cheap and local models far below, `ollama/llama3.2` at `$0.00`.
-Then a line showing how `full` scale (five sweeps) multiplies the `quick`
-estimate.
+## Example output
 
-This is the same machinery behind `promptlens estimate` and the `--dry-run` /
-`--confirm` flags on `explain`, and behind the README's "don't accidentally
-expense a tiny yacht" promise.
+(output from a gpt-5.4-mini run; your token counts will vary)
 
-## Going exact
+```text
+Provider: openai · model: gpt-5.4-mini
+Projected attribution cost from one real baseline call:
 
-The built-in estimate uses a conservative character heuristic (and `tiktoken`
-for OpenAI-family models). For an exact, still inference-free Anthropic count,
-add `--exact-tokens` on the CLI:
+╭───────────────────── Projected sweep cost ──────────────────────╮
+│  Model                              gpt-5.4-mini                │
+│  Features to attribute              11                          │
+│  Provider calls remaining           11                          │
+│  Baseline usage (metered)           312 in / 184 out            │
+│  Projected tokens                   3,744 in / 2,208 out        │
+│  Input cost                         $0.0028                     │
+│  Output cost                        $0.0099                     │
+│  Projected total                    $0.0127                     │
+│  … on anthropic/claude-opus-4-8     $0.0739                     │
+│  … on openai/gpt-5.4                $0.0425                     │
+│  … on anthropic/claude-haiku-4-5    $0.0148                     │
+│  … on ollama/llama3.2               $0.0000                     │
+╰───────── baseline-derived · pricing updated 2026-06-09 ─────────╯
+
+At 'quick' scale that is 11 evaluations; 'full' scale runs 55 and projects to
+$0.0595 on gpt-5.4-mini.
+The same run priced on a local model (ollama/llama3.2) is $0.00 — the cost
+case for local inference in one line.
+
+Lens, not oracle: projections use the provider's real metered usage for this
+baseline and promptlens' built-in pricing table; check live provider pricing
+before budgeting.
+```
+
+## The same gate on the CLI
+
+`promptlens explain` always runs the baseline first, shows this panel, and asks
+**"Run the remaining N provider calls?"** before spending the rest. `--yes/-y`
+skips the question; `--dry-run` stops after the baseline. `promptlens estimate`
+does the baseline-and-project step on its own (it costs one real call):
 
 ```bash
 promptlens estimate --prompt examples/cost_compare/prompt.md \
-  --model anthropic/claude-opus-4-8
+  --provider openai --model gpt-5.4-mini \
+  --compare anthropic/claude-opus-4-8,ollama/llama3.2
 ```
+
+`promptlens models` lists the built-in pricing table.

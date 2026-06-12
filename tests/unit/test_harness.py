@@ -59,14 +59,21 @@ def test_harness_can_run_supplementary_mutations() -> None:
     assert result.to_dict()["supplementary_evaluations"][0]["metadata"] == {"source": "test"}
 
 
-def test_estimate_supports_model_comparisons() -> None:
+def test_estimate_from_baseline_supports_model_comparisons() -> None:
+    from promptlens.core.base import TokenUsage
+
     harness = AttributionHarness(
         adapter=EchoAdapter(model="openai/gpt-4o"),
         segmenter=SentenceSegmenter(),
         scorer=LengthDriftScorer(),
     )
+    baseline = CompletionOutput(
+        text="ok", usage=TokenUsage(input_tokens=10, output_tokens=5)
+    )
 
-    estimate = harness.estimate("One. Two.", compare_models=["openai/gpt-4o-mini"])
+    estimate = harness.estimate_from_baseline(
+        "One. Two.", baseline, compare_models=["openai/gpt-4o-mini"]
+    )
 
     assert estimate.features == 2
     assert "openai/gpt-4o-mini" in estimate.comparisons

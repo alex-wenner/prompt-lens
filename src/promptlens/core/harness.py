@@ -18,7 +18,7 @@ from promptlens.core.base import (
     Segmenter,
     ToolDefinitions,
 )
-from promptlens.core.pricing import estimate_cost
+from promptlens.core.pricing import project_cost
 from promptlens.core.result import (
     AttributionResult,
     CoalitionEvaluation,
@@ -29,6 +29,10 @@ from promptlens.core.result import (
 )
 from promptlens.maskers import PlaceholderMasker
 from promptlens.samplers import LeaveOneOutSampler
+
+
+class CostGateAborted(RuntimeError):
+    """Raised when a cost gate declines to continue past the baseline call."""
 
 
 class AttributionHarness:
@@ -46,7 +50,6 @@ class AttributionHarness:
         optimizer: PromptOptimizer | None = None,
         perturbation_scale: str | int = "quick",
         samples_per_coalition: int = 1,
-        expected_output_tokens: int = 300,
     ) -> None:
         if samples_per_coalition < 1:
             msg = f"samples_per_coalition must be >= 1, got {samples_per_coalition}"
@@ -60,56 +63,62 @@ class AttributionHarness:
         self.optimizer = optimizer
         self.perturbation_scale = perturbation_scale
         self.samples_per_coalition = samples_per_coalition
-        self.expected_output_tokens = expected_output_tokens
 
-    def estimate(
+    def run_baseline(
+        self, prompt: str, tools: ToolDefinitions | None = None
+    ) -> CompletionOutput:
+        """Run the single unmasked baseline completion (one real provider call)."""
+        return self.adapter.complete(prompt, tools=tools)
+
+    def estimate_from_baseline(
+        self,
+        prompt: str,
+        baseline: CompletionOutput,
+        tools: ToolDefinitions | None = None,
+        compare_models: list[str] | None = None,
+    ) -> CostEstimate:
+        """Project the sweep cost from the baseline call's real provider usage.
+
+        No tokenizer, no heuristic: the provider's metered usage for the
+        baseline is multiplied by the number of planned masked-prompt
+        evaluations. Supplementary rewrites and the optimizer's rewrite call
+        add adapter calls on top of this projection.
+        """
+        features = self.segmenter.segment(prompt, tools=tools)
+        evaluations = (
+            self.sampler.estimate_evaluations(len(features)) * self.samples_per_coalition
+        )
+        return project_cost(
+            model=self.adapter.model,
+            usage=baseline.usage,
+            features=len(features),
+            evaluations=evaluations,
+            compare_models=compare_models,
+        )
+
+    def explain(
         self,
         prompt: str,
         tools: ToolDefinitions | None = None,
-        compare_models: list[str] | None = None,
-        exact_tokens: bool = False,
-    ) -> CostEstimate:
-        """Preview attribution cost without making inference calls.
+        *,
+        baseline: CompletionOutput | None = None,
+        cost_gate: Callable[[CostEstimate], bool] | None = None,
+    ) -> AttributionResult:
+        """Attribute ``prompt`` feature by feature.
 
-        Segmentation and masking run offline, so input tokens are counted per
-        actual masked prompt rather than assuming every call resends the full
-        prompt. Supplementary rewrites and the optimizer's rewrite call are not
-        included; they add adapter calls on top of this estimate.
-
-        ``exact_tokens=True`` uses the adapter's exact token counter when it has
-        one (``AnthropicAdapter`` exposes the provider's free ``count_tokens``
-        metering endpoint). That makes one free network call per prompt counted
-        — no inference, no token charges — and falls back silently to the local
-        counters for adapters without exact counting.
+        ``baseline`` lets a caller reuse an already-run baseline completion
+        (e.g. the CLI runs it first to project cost) so it is not paid for
+        twice. ``cost_gate`` is called with the baseline-derived
+        :class:`CostEstimate` before any masked-prompt call is made; returning
+        ``False`` raises :class:`CostGateAborted` and nothing further is spent.
         """
         features = self.segmenter.segment(prompt, tools=tools)
-        masked_prompts = [
-            self.masker.mask(features, coalition)
-            for coalition in self.sampler.sample(len(features))
-        ]
-        evaluations = len(masked_prompts) * self.samples_per_coalition
-        token_count_fn: Callable[[str], int] | None = None
-        adapter_counter = getattr(self.adapter, "count_tokens", None)
-        if exact_tokens and callable(adapter_counter):
-
-            def _exact_count(text: str) -> int:
-                return int(adapter_counter(text, tools=tools))
-
-            token_count_fn = _exact_count
-        return estimate_cost(
-            model=self.adapter.model,
-            prompt=prompt,
-            features=len(features),
-            evaluations=evaluations,
-            expected_output_tokens=self.expected_output_tokens,
-            compare_models=compare_models,
-            evaluation_prompts=masked_prompts,
-            token_count_fn=token_count_fn,
-        )
-
-    def explain(self, prompt: str, tools: ToolDefinitions | None = None) -> AttributionResult:
-        features = self.segmenter.segment(prompt, tools=tools)
-        baseline = self.adapter.complete(prompt, tools=tools)
+        if baseline is None:
+            baseline = self.adapter.complete(prompt, tools=tools)
+        cost_estimate = self.estimate_from_baseline(prompt, baseline, tools=tools)
+        if cost_gate is not None and not cost_gate(cost_estimate):
+            msg = "Attribution run aborted at the cost gate after the baseline call"
+            raise CostGateAborted(msg)
         coalitions = list(self.sampler.sample(len(features)))
         samples = self.samples_per_coalition
         masked_prompts = [self.masker.mask(features, coalition) for coalition in coalitions]
@@ -194,7 +203,7 @@ class AttributionHarness:
             baseline_output=baseline,
             attributions=attributions,
             evaluations=evaluations,
-            cost_estimate=self.estimate(prompt, tools=tools),
+            cost_estimate=cost_estimate,
             supplementary_evaluations=supplementary_evaluations,
         )
 
@@ -203,17 +212,26 @@ class AttributionHarness:
         prompt: str,
         tools: ToolDefinitions | None = None,
         result: AttributionResult | None = None,
+        *,
+        baseline: CompletionOutput | None = None,
+        cost_gate: Callable[[CostEstimate], bool] | None = None,
     ) -> OptimizationResult:
         """Propose an attribution-informed prompt rewrite.
 
         Runs :meth:`explain` to gather attribution evidence when ``result`` is not
-        supplied, then hands that evidence to the configured ``optimizer``. The
-        proposed rewrite is returned for review and is never adopted automatically.
+        supplied (``baseline`` and ``cost_gate`` are forwarded to it; the final
+        rewrite adds one call on top of the gate's estimate), then hands that
+        evidence to the configured ``optimizer``. The proposed rewrite is
+        returned for review and is never adopted automatically.
         """
         if self.optimizer is None:
             msg = "AttributionHarness.optimize requires an optimizer"
             raise ValueError(msg)
-        attribution_result = result if result is not None else self.explain(prompt, tools=tools)
+        attribution_result = (
+            result
+            if result is not None
+            else self.explain(prompt, tools=tools, baseline=baseline, cost_gate=cost_gate)
+        )
         optimization = self.optimizer.optimize(prompt, attribution_result)
         if not isinstance(optimization, OptimizationResult):
             msg = "Optimizer must return an OptimizationResult"

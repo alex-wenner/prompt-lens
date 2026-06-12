@@ -14,7 +14,9 @@ value, and it recovers the real contribution of both redundant instructions.
 Config permutation this example pins: ``RandomCoalitionSampler`` (seeded for
 reproducibility) versus ``LeaveOneOutSampler``, scored with ``LengthDriftScorer``
 and masked with ``FillerMasker`` (masked text replaced by same-length filler).
-It runs fully offline — the lesson is about the estimator, not the model.
+It runs against a **real provider** (set ``OPENAI_API_KEY``, or pick another
+provider via ``PROMPTLENS_EXAMPLE_PROVIDER``). Note the Banzhaf sweep makes
+hundreds of calls on a deliberately short prompt — still cheap, but real.
 """
 
 from __future__ import annotations
@@ -24,14 +26,14 @@ from pathlib import Path
 from typing import Any
 
 from promptlens import AttributionHarness
-from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions
+from promptlens.core.base import Adapter
 from promptlens.maskers import FillerMasker
 from promptlens.samplers import LeaveOneOutSampler, RandomCoalitionSampler
 from promptlens.scorers import LengthDriftScorer
 from promptlens.segmenters import SentenceSegmenter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _shared import print_footer  # noqa: E402
+from _shared import print_footer, require_adapter  # noqa: E402
 
 # Two redundant verbosity drivers (sentences 2 and 3): either one on its own
 # produces a long, detailed reply, so neither has a marginal effect at the full
@@ -45,32 +47,6 @@ PROMPT = (
 
 REASONING_SIGNAL = "reasoning step by step"
 EXAMPLE_SIGNAL = "worked example"
-
-# Either driver yields the long reply; only masking both collapses it to terse.
-_LONG = (
-    "Here is what is happening: your order cleared payment, entered fulfillment, "
-    "and shipped this morning. For example, order #4821 followed the same path "
-    "yesterday and arrived within a day. Tracking is on its way to your inbox now."
-)
-_TERSE = "Your order shipped today."
-
-
-class SimulatedHelpdeskAgent(Adapter):
-    """Offline model where two redundant instructions both drive reply length.
-
-    The reply is long when *either* the step-by-step or worked-example rule is
-    visible, and only collapses to terse when both are masked — the redundancy
-    leave-one-out cannot see from the full prompt alone.
-    """
-
-    def __init__(self) -> None:
-        self.model = "simulated-helpdesk-agent"
-
-    def complete(self, prompt: str, tools: ToolDefinitions | None = None) -> CompletionOutput:
-        del tools
-        lowered = prompt.lower()
-        verbose = REASONING_SIGNAL in lowered or EXAMPLE_SIGNAL in lowered
-        return CompletionOutput(text=_LONG if verbose else _TERSE)
 
 
 def _values_for(harness: AttributionHarness) -> dict[str, float]:
@@ -86,7 +62,7 @@ def _values_for(harness: AttributionHarness) -> dict[str, float]:
 
 def main(adapter: Adapter | None = None) -> dict[str, Any]:
     """Attribute the same prompt with leave-one-out and with Banzhaf sampling."""
-    model = adapter if adapter is not None else SimulatedHelpdeskAgent()
+    model = adapter if adapter is not None else require_adapter()
     common = {
         "adapter": model,
         "segmenter": SentenceSegmenter(),

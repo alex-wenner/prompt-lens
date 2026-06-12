@@ -1,11 +1,4 @@
-"""Provider-backed embedding clients for the semantic drift scorer.
-
-:class:`~promptlens.scorers.text.EmbeddingScorer` accepts any object matching the
-:class:`~promptlens.scorers.text.EmbeddingClient` protocol. This module supplies a
-real, provider-backed client so attribution can be scored with genuine semantic
-embeddings rather than the deterministic text-shape fallback used for offline
-smoke runs.
-"""
+"""OpenAI (and OpenAI-compatible) embedding client."""
 
 from __future__ import annotations
 
