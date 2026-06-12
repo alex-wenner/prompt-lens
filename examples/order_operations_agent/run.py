@@ -14,27 +14,24 @@ of the prompt intact. Trajectory drift is scored with the argument-aware tool
 scorer (a free-text ``summary`` parameter is weighted to zero so rephrasing
 never counts as drift) blended with output-length drift for the reply envelope.
 
-By default this runs against a **real provider** (set ``OPENAI_API_KEY`` or
-``ANTHROPIC_API_KEY``; see ``examples/_shared.py``). With no credential it
-falls back to a deterministic offline agent whose tool trajectory is governed by
-the same policy sentences a real model would key on, so the example runs
-end-to-end and doubles as a CI smoke test.
+This runs against a **real provider** (set ``OPENAI_API_KEY``, or pick another
+provider via ``PROMPTLENS_EXAMPLE_PROVIDER``; see ``examples/_shared.py``).
 """
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Annotated, Any
 
 from promptlens import AttributionHarness, explain_drilldown
+from promptlens.cli.render import render_tools
 from promptlens.core.base import Adapter, CompletionOutput, ToolDefinitions, tool
 from promptlens.scorers import CompositeScorer, LengthDriftScorer, ToolArgumentDriftScorer
 from promptlens.segmenters import MarkdownSectionSegmenter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from _shared import load_text, print_footer, select_adapter  # noqa: E402
+from _shared import load_text, print_footer, require_adapter  # noqa: E402
 
 INSTRUCTIONS = load_text(__file__, "instructions.md")
 
@@ -43,16 +40,6 @@ TICKET = (
     "refund of $182.40 on order ORD-7421 — the item arrived damaged. Order "
     "status is delivered; account tier is preferred."
 )
-
-# Policy sentences the offline agent keys on. Each lives in exactly one
-# sentence of instructions.md, so masking that sentence flips the behavior —
-# the same causal link attribution should surface for a real model.
-ESCALATE_SIGNAL = "must be escalated"
-RMA_SIGNAL = "require an rma"
-LOOKUP_SIGNAL = "call lookup_order first"
-AUDIT_SIGNAL = "order_id on every tool call"
-JSON_SIGNAL = "reply to the account manager in json"
-
 
 @tool
 def lookup_order(order_id: Annotated[str, "Order identifier, for example ORD-7421."]) -> str:
@@ -103,62 +90,6 @@ class TicketedAdapter(Adapter):
         return self.inner.complete(f"{prompt}\n\n# Ticket\n\n{TICKET}", tools=tools)
 
 
-class SimulatedOrderOpsAgent(Adapter):
-    """Offline fallback: a trajectory governed by the visible policy sentences.
-
-    Reads the masked instruction text the harness actually sends and follows
-    whatever policy survives — exactly the dependency structure attribution is
-    supposed to recover. The ticket is a $182.40 damaged-item refund, so the
-    escalation threshold, the RMA prerequisite, the lookup-first rule, the
-    order_id audit rule, and the JSON output contract each control one
-    observable piece of the run.
-    """
-
-    def __init__(self) -> None:
-        self.model = "simulated-order-ops-agent"
-
-    def complete(self, prompt: str, tools: ToolDefinitions | None = None) -> CompletionOutput:
-        del tools
-        visible = prompt.lower()
-        audited = AUDIT_SIGNAL in visible
-
-        def arguments(**kwargs: Any) -> dict[str, Any]:
-            return {"order_id": "ORD-7421", **kwargs} if audited else kwargs
-
-        calls: list[dict[str, Any]] = []
-        if LOOKUP_SIGNAL in visible:
-            calls.append({"name": "lookup_order", "arguments": arguments()})
-        if RMA_SIGNAL in visible:
-            calls.append(
-                {"name": "create_rma", "arguments": arguments(reason_code="damaged_in_transit")}
-            )
-        if ESCALATE_SIGNAL in visible:
-            calls.append(
-                {
-                    "name": "escalate_to_human",
-                    "arguments": arguments(
-                        reason_code="refund_over_limit",
-                        summary="Refund of $182.40 exceeds the $100 direct-refund limit.",
-                    ),
-                }
-            )
-            action, status = "escalated_to_reviewer", "pending_review"
-        else:
-            calls.append({"name": "issue_refund", "arguments": arguments(amount=182.40)})
-            action, status = "refund_issued", "resolved"
-        if JSON_SIGNAL in visible:
-            text = json.dumps(
-                {
-                    "status": status,
-                    "action_taken": action,
-                    "next_step": "Reply to Dana with the outcome.",
-                }
-            )
-        else:
-            text = f"Handled the Helio Manufacturing ticket: {action}."
-        return CompletionOutput(text=text, tool_calls=calls)
-
-
 def build_scorer() -> CompositeScorer:
     """Trajectory drift first, reply-envelope drift second.
 
@@ -176,7 +107,8 @@ def build_scorer() -> CompositeScorer:
 
 def main(adapter: Adapter | None = None) -> dict[str, Any]:
     """Run the demo and return the headline numbers for inspection and tests."""
-    inner = adapter if adapter is not None else select_adapter(SimulatedOrderOpsAgent())
+    inner = adapter if adapter is not None else require_adapter()
+    render_tools(TOOLS)
     harness = AttributionHarness(
         adapter=TicketedAdapter(inner),
         segmenter=MarkdownSectionSegmenter(),

@@ -195,7 +195,7 @@ These results are stored in `AttributionResult.supplementary_evaluations` and re
 Scorers convert output differences into numeric signals.
 
 - `LengthDriftScorer` is useful for offline smoke tests because it does not need external services.
-- `EmbeddingScorer` measures semantic drift with an embedding client. On the CLI the `embedding` scorer is provider-backed: pass a scorer config naming a provider, e.g. `{"provider": "openai", "model": "text-embedding-3-small"}`. For fully offline smoke runs use the `embedding-local` scorer, a deterministic text-shape fallback that is **not** semantic and should never be used for real attribution.
+- `EmbeddingScorer` measures semantic drift with an embedding client. The clients live one provider per module under `promptlens/scorers/embeddings/`: `HuggingFaceEmbeddingClient` (local `sentence-transformers`, the CLI default — real semantic embeddings with no API key, via the `huggingface` extra) and `OpenAIEmbeddingClient` (hosted OpenAI or any OpenAI-compatible endpoint). On the CLI, `--scorer embedding` uses the local Hugging Face model unless a scorer config selects another provider, e.g. `{"provider": "openai", "model": "text-embedding-3-small"}`.
 - `LogprobScorer` compares average token log probabilities when the adapter provides them. Use it only with models that return logprobs (e.g. OpenAI `gpt-4o`/`gpt-4.1`); GPT-5 reasoning models and Anthropic models do not expose them.
 - `ToolAccuracyScorer` checks whether a completion selected an expected tool and required arguments.
 - `ToolSequenceDriftScorer` (`tool-sequence` on the CLI) measures the normalized edit distance between the baseline and candidate tool-call sequences — tool-choice drift for single completions, tool-*path* drift for `AgentAdapter` runs. Only tool *names* are compared.
@@ -284,50 +284,52 @@ Drill-down's trade-off is honest: on short prompts the per-refinement baseline c
 
 ## CLI workflow
 
-Prefer to be walked through it? `promptlens wizard` is the interactive path: it explains each choice (provider, segmenter, drill-down, scorer, masker, scale, synopsis) with sensible defaults, shows the cost estimate before any provider call, runs the experiment, and prints the equivalent non-interactive `promptlens explain` command so the configured run can be scripted or shared. Bare `promptlens` shows the banner and points to it.
+Prefer to be walked through it? `promptlens wizard` is the interactive path: it explains each choice (provider, segmenter, drill-down, scorer, masker, scale, synopsis) with sensible defaults, runs the real baseline, shows the model's reply and the projected sweep cost, asks before spending the rest, runs the experiment, and prints the equivalent non-interactive `promptlens explain` command so the configured run can be scripted or shared. Bare `promptlens` shows the banner and points to it.
 
-### Estimate cost
+### The baseline-derived cost gate
 
-Use `estimate` before live provider runs:
+promptlens never guesses token counts with a local tokenizer or heuristic. Instead, every `explain`/`optimize` run starts with the **real baseline completion**: the unmasked prompt runs once, the CLI shows the model's reply (with its tool trajectory, when tools are in play) and the provider's own metered usage for that call, and projects the sweep as
 
-```bash
-promptlens estimate \
-  --prompt "Summarize this incident report and recommend next steps." \
-  --model openai/gpt-4o-mini \
-  --segmenter sentences \
-  --scale quick
+```
+projected input  = baseline input tokens  × (evaluations + 1)
+projected output = baseline output tokens × (evaluations + 1)
 ```
 
-The estimate includes baseline plus masked evaluations. If a prompt has five features and the sampler runs one leave-one-out sweep, expect six total model calls: one baseline call and five masked calls.
-
-Segmentation and masking run offline, so input tokens are counted per **actual masked prompt** rather than assuming every call resends the full prompt — with `--masker drop` the estimate shrinks accordingly. Token counting uses `tiktoken` when it is installed (via the `openai` extra) and the model is an OpenAI-family model; everything else uses a conservative character heuristic. Claude deliberately stays on the heuristic by default even when `tiktoken` is available, because `tiktoken` is OpenAI's tokenizer and undercounts Claude tokens by 15–20%.
-
-For **exact** Claude counts, pass `--exact-tokens` (SDK: `harness.estimate(prompt, exact_tokens=True)`). This counts every prompt — baseline and each masked perturbation — through Anthropic's `count_tokens` metering endpoint, which is free and runs no inference, but does need credentials and network access; that is why it is opt-in rather than the default for a "no provider calls" dry run. Adapters without an exact counter fall back silently to the local counters. The estimate table reports which counter produced the numbers (`heuristic`, `tiktoken`, or `provider`).
-
-You don't have to run `estimate` separately: `explain` and `optimize` accept `--dry-run` (print the estimate and exit without provider calls) and `--confirm` (print the estimate, then ask before spending). Combined with `--segmenter auto` — which picks sections for markdown with headings, paragraphs for text with blank lines, and sentences otherwise — the low-decision path is:
+Every masked prompt is a near-copy of the baseline prompt with one feature hidden, so the baseline's real usage is the tightest honest per-call proxy available without running the sweep itself. The CLI then asks before spending the rest; the baseline is reused by the sweep, never paid for twice. `--yes/-y` skips the question for scripted runs, and `--dry-run` stops after the baseline:
 
 ```bash
-promptlens explain --prompt ./prompt.md --provider openai --segmenter auto --confirm
+promptlens explain --prompt ./prompt.md --provider openai --segmenter auto
 ```
 
-Note the estimate covers attribution calls only: supplementary rewrites and the optimizer's final rewrite call add adapter calls on top, and for `AgentAdapter` runs each evaluation is a whole agent loop rather than one completion.
+If a prompt has five features and the sampler runs one leave-one-out sweep, the projection covers six total calls: the baseline that already ran plus five masked calls. Adapters that report no usage (echo, agents without metering) show the projection as unavailable rather than inventing a number.
 
-Compare model pricing entries with `--compare`:
+`promptlens estimate` is the standalone version of the same flow — it costs exactly one provider call and prices the identical sweep on other models with `--compare`:
 
 ```bash
 promptlens estimate \
   --prompt ./prompt.md \
-  --model openai/gpt-4o \
+  --provider openai \
   --compare openai/gpt-4o-mini,anthropic/claude-haiku-4-5
+```
+
+Note the projection covers attribution calls only: supplementary rewrites and the optimizer's final rewrite call add adapter calls on top, and for `AgentAdapter` runs each evaluation is a whole agent loop rather than one completion.
+
+From the SDK the same pieces are explicit — `run_baseline` makes the one real call, `estimate_from_baseline` projects from its usage, and `explain(..., baseline=..., cost_gate=...)` reuses the baseline and aborts (raising `CostGateAborted`) if the gate returns `False`:
+
+```python
+baseline = harness.run_baseline(prompt)
+estimate = harness.estimate_from_baseline(prompt, baseline)
+result = harness.explain(prompt, baseline=baseline, cost_gate=lambda e: e.total_usd < 0.50)
 ```
 
 ### Explain a prompt offline
 
-The default CLI `explain` command uses the offline echo pipeline, which is useful for checking segmentation, masking, output rendering, and JSON export without provider credentials:
+The `echo` provider runs the pipeline without provider credentials, which is useful for checking segmentation, masking, output rendering, and JSON export:
 
 ```bash
 promptlens explain \
   --prompt "Always answer in JSON. Include a confidence score." \
+  --provider echo --yes \
   --segmenter sentences \
   --output attribution.json
 ```
@@ -352,7 +354,6 @@ The synopsis call defaults to the run's provider, but `--synopsis-provider`, `--
 promptlens explain \
   --prompt ./prompt.md \
   --provider anthropic \
-  --confirm \
   --synopsis \
   --synopsis-provider ollama \
   --synopsis-model llama3.2
@@ -444,7 +445,7 @@ Use attribution to generate hypotheses, then test those hypotheses with targeted
 
 ## Cost and privacy notes
 
-`promptlens estimate` uses a conservative token heuristic and built-in pricing entries. Always check provider pricing for production budgeting.
+Cost projections use the provider's real metered usage for the baseline call and promptlens' built-in pricing entries. Always check live provider pricing for production budgeting.
 
 The library does not collect telemetry, prompts, outputs, PII, API keys, or secrets. Live provider calls still send prompts to the provider configured by your adapter, so handle sensitive data according to your own policies before running attribution.
 
