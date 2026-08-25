@@ -21,7 +21,8 @@ class AnthropicAdapter(Adapter):
 
     Set ``use_batch_api=True`` to route :meth:`complete_batch` through the
     Anthropic Message Batches API (50% cheaper, asynchronous with polling).
-    The synchronous :meth:`complete` path is unchanged.
+    The synchronous :meth:`complete` path is unchanged. Batch polling gives up
+    after ``batch_timeout_seconds`` and raises :class:`TimeoutError`.
 
     ``temperature`` is omitted from requests for models that removed sampling
     parameters (Claude Opus 4.7 and later), where sending it returns a 400.
@@ -35,9 +36,13 @@ class AnthropicAdapter(Adapter):
         client: Any | None = None,
         use_batch_api: bool = False,
         poll_interval_seconds: float = 5.0,
+        batch_timeout_seconds: float = 600.0,
     ) -> None:
         if poll_interval_seconds <= 0:
             msg = f"poll_interval_seconds must be > 0, got {poll_interval_seconds}"
+            raise ValueError(msg)
+        if batch_timeout_seconds <= 0:
+            msg = f"batch_timeout_seconds must be > 0, got {batch_timeout_seconds}"
             raise ValueError(msg)
         self.model = model
         self.temperature = temperature
@@ -45,6 +50,7 @@ class AnthropicAdapter(Adapter):
         self._client = client
         self.use_batch_api = use_batch_api
         self.poll_interval_seconds = poll_interval_seconds
+        self.batch_timeout_seconds = batch_timeout_seconds
 
     def _request_params(self, prompt: str, tools: ToolDefinitions | None) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
@@ -85,10 +91,17 @@ class AnthropicAdapter(Adapter):
         return [outputs_by_id[_custom_id(index)] for index in range(len(prompts))]
 
     def _await_batch(self, client: Any, batch_id: str) -> None:
+        deadline = time.monotonic() + self.batch_timeout_seconds
         while True:
             current = client.messages.batches.retrieve(batch_id)
             if current.processing_status == "ended":
                 return
+            if time.monotonic() >= deadline:
+                msg = (
+                    f"Anthropic batch {batch_id} did not finish within "
+                    f"{self.batch_timeout_seconds} seconds"
+                )
+                raise TimeoutError(msg)
             time.sleep(self.poll_interval_seconds)
 
 
@@ -103,7 +116,7 @@ def _message_to_output(response: Any) -> CompletionOutput:
         block_type = getattr(block, "type", "")
         if block_type == "text":
             text_parts.append(str(getattr(block, "text", "")))
-        if block_type == "tool_use":
+        elif block_type == "tool_use":
             tool_calls.append(
                 {
                     "id": getattr(block, "id", None),

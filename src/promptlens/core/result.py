@@ -321,7 +321,7 @@ class AttributionResult(BaseModel):
                 highlight_table.add_column("Tool calls without them")
             highlight_table.add_column("Output without them", style="dim")
             for highlight in highlights:
-                row = [
+                row: list[str | Text] = [
                     _plain(", ".join(highlight["removed"]) or "(none)"),
                     f"{highlight['score']:.4f}",
                 ]

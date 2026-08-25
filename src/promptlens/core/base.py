@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +17,9 @@ from promptlens.core.tools import (
     normalize_tool,
     tool,
 )
+
+if TYPE_CHECKING:
+    from promptlens.core.result import AttributionResult, OptimizationResult
 
 Coalition = tuple[bool, ...]
 
@@ -121,7 +124,7 @@ class Scorer(ABC):
     "the masked prompt still did the right thing" as "this feature mattered a lot".
     """
 
-    orientation: str = "drift"
+    orientation: Literal["drift", "objective"] = "drift"
 
     @abstractmethod
     def score(self, baseline: CompletionOutput, candidate: CompletionOutput) -> float:
@@ -162,11 +165,10 @@ class PromptOptimizer(ABC):
     """Proposes an improved prompt from completed attribution evidence."""
 
     @abstractmethod
-    def optimize(self, prompt: str, result: Any) -> Any:
-        """Return an OptimizationResult proposing a rewrite of ``prompt``.
+    def optimize(self, prompt: str, result: AttributionResult) -> OptimizationResult:
+        """Return an :class:`~promptlens.core.result.OptimizationResult` for ``prompt``.
 
-        ``result`` is an :class:`~promptlens.core.result.AttributionResult`; it is
-        typed as ``Any`` here to avoid a circular import between base and result.
+        ``result`` is the completed :class:`~promptlens.core.result.AttributionResult`.
         """
 
 
